@@ -1,0 +1,154 @@
+import type { AutonomySettings, AutoSendKey, MessageRecord, RevisionRecord } from "./types";
+
+export const DEFAULT_AUTONOMY: AutonomySettings = {
+  maxAutomaticSpendPerJobMicros: 20_000_000,
+  maxAutomaticSpendPerRepairMicros: 2_000_000,
+  maxAttemptsPerStep: 3,
+  allowedModelFamilies: [
+    "soul",
+    "marketing-studio",
+    "qwen",
+    "ideogram",
+    "recraft",
+    "pixverse",
+    "kling",
+    "seedance",
+    "minimax",
+    "ltx",
+    "wan",
+  ],
+  autoSend: {
+    intakeQuestions: false,
+    proposals: false,
+    progressUpdates: false,
+    conceptShare: false,
+    changeOrders: false,
+    feedbackRequests: false,
+  },
+  finalDeliveryRequiresApproval: true,
+  alwaysPause: {
+    likenessOrVoice: true,
+    unclearOwnership: true,
+    factualClaims: true,
+    exactPackagingOrRegulatedCopy: true,
+    negativeMargin: true,
+    missedDeadlineRisk: true,
+    clientDispute: true,
+  },
+};
+
+const MESSAGE_SETTING: Partial<Record<MessageRecord["kind"], AutoSendKey>> = {
+  intake_question: "intakeQuestions",
+  proposal: "proposals",
+  progress: "progressUpdates",
+  concept: "conceptShare",
+  change_order: "changeOrders",
+  feedback: "feedbackRequests",
+};
+
+export function dispatchDecision(input: {
+  kind: MessageRecord["kind"];
+  channel: MessageRecord["channel"];
+  settings: AutonomySettings;
+}): { status: "draft" | "sent" | "blocked"; reason: string } {
+  if (input.kind === "delivery") {
+    if (input.settings.finalDeliveryRequiresApproval) {
+      return {
+        status: "blocked",
+        reason: "Final delivery always requires human approval under Autonomy Settings.",
+      };
+    }
+  }
+  if (input.channel === "marketplace") {
+    return {
+      status: "draft",
+      reason: "Marketplace messages are draft-only. Agency Operator does not send them.",
+    };
+  }
+  if (input.channel === "internal" || input.kind === "escalation" || input.kind === "revision") {
+    return { status: "draft", reason: "Internal notes and revision interpretations stay in the studio until a person sends them." };
+  }
+  const key = MESSAGE_SETTING[input.kind];
+  if (!key) return { status: "draft", reason: "This message type is not on the auto-send list." };
+  if (input.channel !== "direct_email" && input.channel !== "first_party_portal") {
+    return { status: "draft", reason: "Only direct email or the first-party portal can auto-send, and only when the type is enabled." };
+  }
+  if (!input.settings.autoSend[key]) {
+    return { status: "draft", reason: `${key} is set to draft for approval.` };
+  }
+  return { status: "sent", reason: `${key} is enabled for ${input.channel}.` };
+}
+
+export function repairAllowed(input: {
+  incrementalMicros: number | null;
+  jobSpendMicros: number;
+  attempts: number;
+  family: string;
+  settings: AutonomySettings;
+  introducesRightsIssue: boolean;
+}): { ok: boolean; reason: string } {
+  if (input.introducesRightsIssue) {
+    return { ok: false, reason: "The repair would create a rights, factual, or identity issue. It is escalated." };
+  }
+  if (input.incrementalMicros == null) {
+    return { ok: false, reason: "The repair model has no catalog price. It is escalated instead of guessed." };
+  }
+  if (!input.settings.allowedModelFamilies.includes(input.family)) {
+    return { ok: false, reason: `${input.family} is not in the allowed model families.` };
+  }
+  if (input.attempts > input.settings.maxAttemptsPerStep) {
+    return { ok: false, reason: "The step would exceed the maximum generation attempts." };
+  }
+  if (input.incrementalMicros > input.settings.maxAutomaticSpendPerRepairMicros) {
+    return { ok: false, reason: "Incremental repair cost exceeds the per-repair cap." };
+  }
+  if (input.jobSpendMicros + input.incrementalMicros > input.settings.maxAutomaticSpendPerJobMicros) {
+    return { ok: false, reason: "The repair would exceed the per-job automatic spend cap." };
+  }
+  return { ok: true, reason: "Inside the pre-approved per-repair and per-job caps." };
+}
+
+export function classifyRevision(note: string, includedRoundsRemaining: number): Pick<
+  RevisionRecord,
+  "classification" | "recommendedAction" | "affectedDeliverable"
+> {
+  const text = note.toLowerCase();
+  const scope =
+    /another|additional|also deliver|extra|30-second|30 second|new language|translate|add a|second film|cutdown|director/.test(text) &&
+    !/warmer|hopeful|grade|color|reveal/.test(text);
+  if (scope || includedRoundsRemaining <= 0) {
+    return {
+      classification: "scope_change",
+      affectedDeliverable: "Outside the agreed package",
+      recommendedAction: "Draft a change order. Do not generate until a person approves the new price and spend.",
+    };
+  }
+  return {
+    classification: "included",
+    affectedDeliverable: "Final reveal",
+    recommendedAction: "Apply one targeted grade edit on the reveal. This uses an included revision, not a new scope.",
+  };
+}
+
+export function pauseReasons(input: {
+  settings: AutonomySettings;
+  likeness: boolean;
+  voice: boolean;
+  unclearOwnership: boolean;
+  factual: boolean;
+  packaging: boolean;
+  negativeMargin: boolean;
+  deadlineRisk: boolean;
+  dispute: boolean;
+}): string[] {
+  const reasons: string[] = [];
+  const p = input.settings.alwaysPause;
+  if (p.likenessOrVoice && (input.likeness || input.voice)) reasons.push("Likeness or voice always pauses the workflow.");
+  if (p.unclearOwnership && input.unclearOwnership) reasons.push("Unclear asset ownership always pauses the workflow.");
+  if (p.factualClaims && input.factual) reasons.push("Factual advertising claims always pause the workflow.");
+  if (p.exactPackagingOrRegulatedCopy && input.packaging) reasons.push("Exact packaging or regulated copy always pauses the workflow.");
+  if (p.negativeMargin && input.negativeMargin) reasons.push("Negative expected margin always pauses the workflow.");
+  if (p.missedDeadlineRisk && input.deadlineRisk) reasons.push("Missed deadline risk always pauses the workflow.");
+  if (p.clientDispute && input.dispute) reasons.push("A client dispute always pauses the workflow.");
+  return reasons;
+}

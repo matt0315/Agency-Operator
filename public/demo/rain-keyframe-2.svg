@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#141a1e"/>
+  <rect x="0" y="495" width="1600" height="405" fill="#1c2428"/>
+<path d="M0 558 Q 480 450 1600 594 V 900 H0 Z" fill="#243036"/>
+<polygon points="672,558 800,162 927,558" fill="#b7d5c8" opacity="0.9"/>
+<polygon points="736,558 800,252 864,558" fill="#f0e2c4" opacity="0.55"/>
+<rect x="0" y="648" width="1600" height="8" fill="#8fb8c4" opacity="0.35"/>
+  <text x="48" y="822" fill="#f4f0e8" font-family="IBM Plex Sans, sans-serif" font-size="36">Keyframe 2 — cloud break</text>
+  <text x="48" y="860" fill="#a3988c" font-family="IBM Plex Sans, sans-serif" font-size="20">Control still · Marketing Studio · mock</text>
+</svg>

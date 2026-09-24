@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1600" viewBox="0 0 900 1600">
+  <rect width="900" height="1600" fill="#141a1e"/>
+  <rect x="0" y="980" width="900" height="620" fill="#1c2428"/>
+<polygon points="330,980 450,280 570,980" fill="#d5e7ef"/>
+<polygon points="390,980 450,420 510,980" fill="#f7f1e4" opacity="0.5"/>
+  <text x="48" y="1522" fill="#f4f0e8" font-family="IBM Plex Sans, sans-serif" font-size="36">9:16 film</text>
+  <text x="48" y="1560" fill="#a3988c" font-family="IBM Plex Sans, sans-serif" font-size="20">Ship · Kling 3.0 Pro · mock</text>
+</svg>
