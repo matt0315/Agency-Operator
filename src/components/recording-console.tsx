@@ -31,7 +31,7 @@ export function RecordingConsole({ bundle }: { bundle: JobBundle }) {
           {gate ? `Paused before ${gate}` : bundle.job.status.replaceAll("_", " ")}
         </p>
         <p className="mt-3 max-w-3xl text-lg text-[var(--color-muted)]">
-          Reset returns this demo to the pasted brief. Continue runs one stage and stops before the next.
+          This is the demo step-through. A normal paste runs on its own. Reset returns this demo to the brief, and Continue stops before the next stage.
         </p>
         <div className="mt-5 flex flex-wrap gap-2">
           {GATES.map((item) => (

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { boardHint } from "@/lib/autonomy";
 import { formatUsdAuto, formatWhen } from "@/lib/format";
 import { dashboardJobs } from "@/lib/service";
 import { JOB_STATUSES, PIPELINE_LABEL } from "@/lib/types";
@@ -32,6 +33,7 @@ export default function DashboardPage() {
                 <Link key={job.id} href={`/jobs/${job.id}`} className="block rounded-lg border border-[var(--color-line)] bg-[var(--color-panel-2)] p-3 hover:border-[var(--color-accent)]">
                   <div className="text-sm font-medium leading-snug">{job.title}</div>
                   <div className="mt-2 text-xs text-[var(--color-muted)]">{job.source}</div>
+                  <div className="mt-1 text-xs text-[var(--color-accent)]">{boardHint(job.status)}</div>
                   <div className="mt-2 flex items-center justify-between text-xs">
                     <span>{formatUsdAuto(job.clientPriceMicros)}</span>
                     <span className="text-[var(--color-muted)]">{formatWhen(job.deadlineAt)}</span>

@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. With no API keys, the app stays in mock mode and the seeded jobs are already on the board.
+Open http://localhost:3000. With no API keys, the app stays in mock mode. Paste a brief and the studio runs it. The seeded jobs are already on the board so each stage can be inspected.
 
 ```bash
 npm test
@@ -33,6 +33,25 @@ If `APP_MODE` is unset or `live`:
 - Generation uses Higgsfield only when both `HF_API_KEY_ID` and `HF_API_KEY_SECRET` are set. Otherwise generation is local.
 
 Copy `.env.example` to `.env.local`. Leave the secrets empty. Do not put keys in client code. The connection test and provider adapter run on the server, and errors are redacted before they reach the UI.
+
+## What runs alone
+
+Fully automatic within limits is on by default. After one paste the app analyzes the brief, prices the route from the catalog, and — when the deterministic decision is accept, or the only soft hold is a positive margin under the target — approves the workflow, generates, runs QA, repairs inside the caps, and drafts the delivery package. The job timeline lists what ran without a person and what is waiting.
+
+Client messages are drafted for approval. They send themselves only when that message type is enabled, and only on direct email or the first-party portal. The fully automatic preset may enable intake questions, progress notes, and feedback requests. Concept share and change orders stay off. Marketplace threads are never sent.
+
+Recording mode is the demo step-through. It pauses before analysis, approval, generation, QA, and delivery. A normal job does not use it.
+
+## What still needs a person
+
+- Marketplace scrape, auto-apply, marketplace messaging, accepting a marketplace contract, or delivering through a marketplace
+- Likeness, voice, logos, packaging or regulated claims, licensed music, and unclear ownership
+- A missing price, a negative margin, a missing input, or a motion deadline under 12 hours
+- Spend above the per-job or per-repair cap, or above the production ceiling
+- A model override, a scope change, or any other change outside the approved route
+- Final delivery while “final delivery always requires approval” is on (the default). The control is **Approve delivery**
+
+Auto-repair and auto-advance generation are on by default. Turn **Fully automatic within limits** off to stop the paste-and-run path. The preset on Autonomy Settings restores the maximum safe profile without raising those hard stops.
 
 ## Models
 
@@ -64,7 +83,7 @@ The connection test, after a checkbox confirmation, estimates and optionally sub
 1. **After the Rain: Glass Monument** — Upwork-style paste, $2,800 package, 12-second 16:9 and 9:16 films plus three keyframes. Route: Soul 2 concepts, Marketing Studio keyframes, Kling 3.0 Pro motion, a Seedance 2.5 reflection repair, Soul Cinema stills. The job is parked in QA with a ledger, a failed unpaid concept, and a pending “warmer reveal” revision.
 2. **Night Orchard: Slow Orbit** — one 8-second orbit and a hero still. Route: PixVerse studies, Qwen edit, Seedance 2.5 image-to-video at 720p. It waits in Needs Review so the two routes can be compared.
 
-Recording mode on either demo resets the brief and pauses before analysis, approval, generation, QA, and delivery. Continue steps one gate at a time. The agent cannot mark the job delivered; **Approve final delivery** is a separate control. **Agent tries to deliver** stays blocked while final delivery requires approval.
+Recording mode on either demo resets the brief and pauses before analysis, approval, generation, QA, and delivery. Continue steps one gate at a time. The agent cannot mark the job delivered; **Approve delivery** is the human control. **Agent tries to deliver** stays blocked while final delivery requires approval. A new paste, outside recording mode, runs the automatic path instead.
 
 Two extra fixtures fill the board: a rejected celebrity-voice request, and an unanalyzed email.
 

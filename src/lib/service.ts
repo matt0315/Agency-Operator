@@ -1,4 +1,4 @@
-import { dispatchDecision, repairAllowed } from "./autonomy";
+import { autoAdvanceDecision, dispatchDecision, repairAllowed } from "./autonomy";
 import { getModel } from "./catalog";
 import {
   clearJobWork,
@@ -34,6 +34,7 @@ import {
   upsertClient,
 } from "./db";
 import { decideJob, stepCostMicros } from "./economics";
+import { hoursUntil } from "./format";
 import { analysisMode, generationMode, redact } from "./mode";
 import { mockAnalyze } from "./mock-analysis";
 import { analyzeWithOpenAI } from "./openai";
@@ -122,6 +123,7 @@ export function getBundle(id: string): JobBundle | null {
     ledger: listLedger(id),
     economics: workflow ? economicsFor(job, workflow.steps) : null,
     mode: { analysis: analysisMode(), generation: generationMode() },
+    settings: getAutonomy(),
   };
 }
 
@@ -253,7 +255,7 @@ export function saveHumanAnalysis(jobId: string, raw: unknown): { ok: true } | {
   return { ok: true };
 }
 
-export function approveWorkflow(jobId: string): void {
+export function approveWorkflow(jobId: string, actor: "human" | "automatic" = "human"): void {
   ensureReady();
   const job = mustJob(jobId);
   const workflow = getWorkflow(jobId);
@@ -277,10 +279,92 @@ export function approveWorkflow(jobId: string): void {
   }
   saveWorkflow({ ...workflow, status: "approved", approvedMaxMicros: job.maxProductionMicros, updatedAt: now() });
   updateJob(jobId, { status: "approved" });
-  audit(jobId, "approval", `Human approved the workflow. Ceiling ${job.maxProductionMicros} micro-USD.`, {
-    recommendation: decision.decision,
-    reasons: decision.reasons,
+  audit(
+    jobId,
+    "approval",
+    actor === "automatic"
+      ? "Ran without a person: approved the workflow inside the production ceiling and the per-job cap."
+      : `Human approved the workflow. Ceiling ${job.maxProductionMicros} micro-USD.`,
+    { actor, recommendation: decision.decision, reasons: decision.reasons },
+  );
+}
+
+export async function runAutomatic(jobId: string): Promise<string> {
+  ensureReady();
+  const job = mustJob(jobId);
+  if (job.recordingGate) return "Recording mode stays stepped. Automatic run skipped.";
+  const settings = getAutonomy();
+  if (!settings.fullyAutomaticWithinLimits) {
+    audit(jobId, "escalation", "Waiting on a person: fully automatic within limits is off.", { actor: "waiting" });
+    return "Waiting on a person: fully automatic within limits is off.";
+  }
+  try {
+    await analyzeJob(jobId);
+  } catch (error) {
+    const message = redact(error instanceof Error ? error.message : "Analysis failed.");
+    audit(jobId, "escalation", `Waiting on a person: analysis failed. ${message}`, { actor: "waiting" });
+    updateJob(jobId, { status: "needs_review" });
+    return message;
+  }
+  audit(jobId, "model_decision", "Ran without a person: analyzed the brief and priced the route.", { actor: "automatic" });
+  const stored = latestAnalysis(jobId);
+  const workflow = getWorkflow(jobId);
+  if (!stored || !workflow) {
+    audit(jobId, "escalation", "Waiting on a person: analysis did not produce a route.", { actor: "waiting" });
+    return "Waiting on a person: analysis did not produce a route.";
+  }
+  const gate = autoAdvanceDecision({
+    settings,
+    decision: stored.decision.decision,
+    analysis: stored.analysis,
+    productionMicros: stored.decision.economics.productionMicros,
+    generationMicros: stored.decision.economics.generationMicros,
+    maxProductionMicros: job.maxProductionMicros,
+    priceDataComplete: stored.decision.economics.priceDataComplete,
+    negativeMargin: stored.decision.economics.negativeMargin,
+    belowTargetMargin: stored.decision.economics.belowTargetMargin,
+    overBudget: stored.decision.economics.overBudget,
+    hoursUntilDeadline: hoursUntil(job.deadlineAt),
   });
+  if (gate.action !== "run") {
+    const summary = `Waiting on a person: ${gate.reasons.join(" ")}`;
+    audit(jobId, "escalation", summary, { actor: "waiting" });
+    return summary;
+  }
+  try {
+    approveWorkflow(jobId, "automatic");
+  } catch (error) {
+    const message = redact(error instanceof Error ? error.message : "Approval blocked.");
+    audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
+    return message;
+  }
+  if (!settings.autoAdvanceGenerations) {
+    audit(jobId, "escalation", "Waiting on a person to start generation. The workflow is already approved.", { actor: "waiting" });
+    return "Waiting on a person to start generation.";
+  }
+  try {
+    await runApprovedSteps(jobId);
+    audit(jobId, "generation", "Ran without a person: generated the approved steps.", { actor: "automatic" });
+    await runQa(jobId);
+    audit(jobId, "repair", "Ran without a person: QA, and repair if it stayed inside the caps.", { actor: "automatic" });
+    draftDelivery(jobId);
+    audit(jobId, "message_draft", "Ran without a person: drafted the delivery package. It has not been sent.", { actor: "automatic" });
+  } catch (error) {
+    const message = redact(error instanceof Error ? error.message : "Automatic production stopped.");
+    audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
+    return message;
+  }
+  if (getAutonomy().finalDeliveryRequiresApproval) {
+    audit(jobId, "escalation", "Waiting on a person: approve delivery. Final delivery has not been sent.", { actor: "waiting" });
+    return "Waiting on a person: approve delivery.";
+  }
+  const channel = /upwork|fiverr|contra/i.test(job.source) ? "marketplace" : "direct";
+  if (channel === "marketplace") {
+    audit(jobId, "escalation", "Waiting on a person: marketplace delivery is never sent by the agent.", { actor: "waiting" });
+    return "Waiting on a person: marketplace delivery is never sent.";
+  }
+  approveDelivery(jobId);
+  return "Delivered on a direct channel because final-delivery approval is off.";
 }
 
 export function rejectJob(jobId: string): void {
@@ -595,6 +679,16 @@ export async function runQa(jobId: string): Promise<void> {
 }
 
 async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: string): Promise<void> {
+  if (!getAutonomy().autoRepair) {
+    recordMessage(job, {
+      kind: "escalation",
+      subject: "Repair is waiting",
+      body: `${failedComponent} failed. Auto-repair is off, so a person chooses the next edit.`,
+      audience: "human",
+    });
+    audit(job.id, "escalation", "Waiting on a person: auto-repair is off.", { actor: "waiting" });
+    return;
+  }
   const repair = steps.find((step) => step.conditional && step.role === "finish");
   if (!repair) {
     recordMessage(job, {
@@ -679,8 +773,35 @@ export function addRevision(jobId: string, note: string): RevisionRecord {
   });
   audit(jobId, classified.classification === "scope_change" ? "escalation" : "revision", row.recommendedAction, {
     incrementalMicros: row.expectedIncrementalMicros,
+    actor: classified.classification === "scope_change" ? "waiting" : "automatic",
   });
   return row;
+}
+
+export async function maybeAutoApplyRevision(revisionId: string): Promise<void> {
+  ensureReady();
+  const settings = getAutonomy();
+  const revision = listJobs().flatMap((job) => listRevisions(job.id)).find((item) => item.id === revisionId);
+  if (!revision || revision.classification !== "included") return;
+  const job = mustJob(revision.jobId);
+  if (job.recordingGate || !settings.fullyAutomaticWithinLimits || !settings.autoRepair) return;
+  const workflow = getWorkflow(job.id);
+  const step = workflow?.steps.find((item) => item.id === revision.affectedStepId) ?? workflow?.steps.find((item) => item.conditional);
+  const family = getModel(step?.modelId ?? "")?.family ?? "";
+  const gate = repairAllowed({
+    incrementalMicros: revision.expectedIncrementalMicros,
+    jobSpendMicros: jobSpendMicros(job.id),
+    attempts: 1,
+    family,
+    settings,
+    introducesRightsIssue: false,
+  });
+  if (!gate.ok) {
+    audit(job.id, "escalation", `Waiting on a person: ${gate.reason}`, { actor: "waiting" });
+    return;
+  }
+  await applyRevision(revisionId);
+  audit(job.id, "repair", "Ran without a person: applied an included revision inside the spend cap.", { actor: "automatic" });
 }
 
 function classify(note: string, remaining: number): { classification: "included" | "scope_change"; affected: string; action: string } {

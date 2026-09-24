@@ -18,6 +18,7 @@ import {
   retryAction,
   revisionAction,
 } from "@/app/actions";
+import { openWaits } from "@/lib/autonomy";
 import { listModels } from "@/lib/catalog";
 import { computeEconomics } from "@/lib/economics";
 import { formatUsdAuto, formatWhen } from "@/lib/format";
@@ -35,6 +36,15 @@ export function JobWorkspace({ bundle, initialTab = "Brief" }: { bundle: JobBund
   const [pending, start] = useTransition();
   const analysis = bundle.analyses.filter((row) => row.kind === "human").at(-1) ?? bundle.analyses.at(-1);
   const steps = bundle.workflow?.steps ?? [];
+  const waits = openWaits({
+    status: bundle.job.status,
+    settings: bundle.settings,
+    decision: analysis?.decision.decision ?? null,
+    reasons: analysis?.decision.reasons ?? [],
+  });
+  const automatic = bundle.audit.filter(
+    (entry) => entry.payload.actor === "automatic" || entry.summary.startsWith("Ran without a person"),
+  );
   const economics = useMemo(() => {
     if (!analysis) return bundle.economics;
     return computeEconomics({
@@ -73,8 +83,29 @@ export function JobWorkspace({ bundle, initialTab = "Brief" }: { bundle: JobBund
               {bundle.job.status.replaceAll("_", " ")}
             </Badge>
           </div>
+          {automatic.length || waits.length ? (
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
+              <div>
+                <p className="kicker">Ran without a person</p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {automatic.length ? automatic.slice(-4).map((entry) => <li key={entry.id}>{entry.summary.replace(/^Ran without a person:\s*/, "")}</li>) : <li className="text-[var(--color-muted)]">No unattended steps on this job yet.</li>}
+                </ul>
+              </div>
+              <div>
+                <p className="kicker">Waiting on you</p>
+                <ul className="mt-2 space-y-1 text-sm">
+                  {waits.length ? waits.map((item) => <li key={item}>{item}</li>) : <li className="text-[var(--color-muted)]">Nothing is blocked.</li>}
+                </ul>
+              </div>
+            </div>
+          ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
-            <Button disabled={pending} onClick={() => run(() => analyzeAction(bundle.job.id))}>
+            {bundle.job.status === "qa" ? (
+              <Button disabled={pending} onClick={() => run(() => approveDeliveryAction(bundle.job.id))}>
+                Approve delivery
+              </Button>
+            ) : null}
+            <Button variant="ghost" disabled={pending} onClick={() => run(() => analyzeAction(bundle.job.id))}>
               Analyze brief
             </Button>
             <Button variant="ghost" disabled={pending} onClick={() => run(() => approveAction(bundle.job.id))}>
@@ -287,10 +318,11 @@ export function JobWorkspace({ bundle, initialTab = "Brief" }: { bundle: JobBund
         <section className="panel p-4 text-sm">
           <h2 className="font-medium">Approval timeline</h2>
           <ul className="mt-3 space-y-2 text-[var(--color-muted)]">
-            <li>Intake is manual. Nothing is scraped or auto-applied.</li>
-            <li>Analysis can recommend. A person approves the first workflow and the ceiling.</li>
-            <li>Inside that ceiling, repairs and included revisions can run. Budget increases stop.</li>
-            <li>Final delivery stays blocked until Approve final delivery.</li>
+            <li>A paste runs analysis, pricing, routing, generation, QA, and in-cap repair when Fully automatic within limits is on.</li>
+            <li>Nothing is scraped, auto-applied, or delivered through a marketplace.</li>
+            <li>Rights, likeness, voice, unclear ownership, and regulated claims wait.</li>
+            <li>Spend over the cap, a new price, or a route change waits.</li>
+            <li>Final delivery waits on Approve delivery.</li>
           </ul>
         </section>
       </div>

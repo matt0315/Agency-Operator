@@ -1,6 +1,9 @@
 import type { AutonomySettings, AutoSendKey, MessageRecord, RevisionRecord } from "./types";
 
 export const DEFAULT_AUTONOMY: AutonomySettings = {
+  fullyAutomaticWithinLimits: true,
+  autoRepair: true,
+  autoAdvanceGenerations: true,
   maxAutomaticSpendPerJobMicros: 20_000_000,
   maxAutomaticSpendPerRepairMicros: 2_000_000,
   maxAttemptsPerStep: 3,
@@ -151,4 +154,138 @@ export function pauseReasons(input: {
   if (p.missedDeadlineRisk && input.deadlineRisk) reasons.push("Missed deadline risk always pauses the workflow.");
   if (p.clientDispute && input.dispute) reasons.push("A client dispute always pauses the workflow.");
   return reasons;
+}
+
+/** Maximum safe profile. Concept share and change orders stay off. Final delivery still needs a person. */
+export function fullyAutomaticPreset(current: AutonomySettings): AutonomySettings {
+  return {
+    ...current,
+    fullyAutomaticWithinLimits: true,
+    autoRepair: true,
+    autoAdvanceGenerations: true,
+    autoSend: {
+      intakeQuestions: true,
+      proposals: false,
+      progressUpdates: true,
+      conceptShare: false,
+      changeOrders: false,
+      feedbackRequests: true,
+    },
+    finalDeliveryRequiresApproval: true,
+    alwaysPause: {
+      likenessOrVoice: true,
+      unclearOwnership: true,
+      factualClaims: true,
+      exactPackagingOrRegulatedCopy: true,
+      negativeMargin: true,
+      missedDeadlineRisk: true,
+      clientDispute: true,
+    },
+  };
+}
+
+const HARD_RIGHTS = new Set([
+  "likeness",
+  "voice",
+  "logo",
+  "packaging_text",
+  "factual_claim",
+  "licensed_music",
+  "unclear_rights",
+  "impersonation",
+]);
+
+export function autoAdvanceDecision(input: {
+  settings: AutonomySettings;
+  decision: "accept" | "human_review" | "reject";
+  analysis: { missingAssets: string[]; rightsAndConsentFlags: { kind: string }[]; deliverables: { format: string; aspectRatio: string; durationSeconds: number | null }[] };
+  productionMicros: number;
+  generationMicros: number;
+  maxProductionMicros: number;
+  priceDataComplete: boolean;
+  negativeMargin: boolean;
+  belowTargetMargin: boolean;
+  overBudget: boolean;
+  hoursUntilDeadline: number;
+}): { action: "run" | "wait" | "stop"; reasons: string[] } {
+  if (input.decision === "reject" || input.overBudget) {
+    return {
+      action: "stop",
+      reasons: ["The job is rejected or over the production budget. Nothing will generate."],
+    };
+  }
+  if (!input.settings.fullyAutomaticWithinLimits) {
+    return { action: "wait", reasons: ["Fully automatic within limits is off. A person runs the next step."] };
+  }
+  const waits: string[] = [];
+  if (!input.priceDataComplete) waits.push("A selected model has no price. Waiting on a person instead of guessing.");
+  if (input.negativeMargin && input.settings.alwaysPause.negativeMargin) {
+    waits.push("Expected margin is negative. Waiting on a person.");
+  }
+  if (input.productionMicros > input.maxProductionMicros) {
+    waits.push("Generation plus contingency is over the production ceiling.");
+  }
+  if (
+    input.generationMicros > input.settings.maxAutomaticSpendPerJobMicros ||
+    input.productionMicros > input.settings.maxAutomaticSpendPerJobMicros
+  ) {
+    waits.push("Expected spend is over the per-job automatic cap. Waiting on a person.");
+  }
+  const pausedRights = input.analysis.rightsAndConsentFlags.filter((flag) => HARD_RIGHTS.has(flag.kind));
+  if (pausedRights.length) {
+    waits.push(`Rights or identity hold: ${pausedRights.map((flag) => flag.kind.replaceAll("_", " ")).join(", ")}.`);
+  }
+  if (input.analysis.missingAssets.length) {
+    waits.push("A required input is missing. The client agent drafted the question. Production waits.");
+  }
+  if (input.analysis.deliverables.some((item) => !item.format || !item.aspectRatio)) {
+    waits.push("A deliverable is missing format or aspect ratio.");
+  }
+  const motion = input.analysis.deliverables.some((item) => (item.durationSeconds ?? 0) > 0);
+  if (motion && input.hoursUntilDeadline >= 0 && input.hoursUntilDeadline < 12 && input.settings.alwaysPause.missedDeadlineRisk) {
+    waits.push("The motion deadline is under 12 hours. Waiting on a person.");
+  }
+  if (waits.length) return { action: "wait", reasons: waits };
+  if (input.decision === "accept") {
+    return { action: "run", reasons: ["Accepted inside the production ceiling and the automatic spend cap."] };
+  }
+  if (input.decision === "human_review" && input.belowTargetMargin) {
+    return {
+      action: "run",
+      reasons: ["Margin is below target, still positive, and inside both ceilings. Auto-approved."],
+    };
+  }
+  return { action: "wait", reasons: ["The review is not on the auto-approve list. Waiting on a person."] };
+}
+
+export function openWaits(input: {
+  status: "new" | "needs_review" | "approved" | "generating" | "qa" | "delivered" | "rejected";
+  settings: AutonomySettings;
+  decision: "accept" | "human_review" | "reject" | null;
+  reasons: string[];
+}): string[] {
+  if (input.status === "rejected") return ["Stopped. This job was rejected and will not generate."];
+  if (input.status === "delivered") return [];
+  if (input.status === "new" && !input.settings.fullyAutomaticWithinLimits) {
+    return ["Waiting on a person to analyze the pasted brief."];
+  }
+  if (input.status === "needs_review") {
+    return input.reasons.length ? input.reasons : ["Waiting on a person to approve the workflow."];
+  }
+  if (input.status === "approved" && !input.settings.autoAdvanceGenerations) {
+    return ["Workflow is approved. Waiting on a person to start generation."];
+  }
+  if (input.status === "qa" && input.settings.finalDeliveryRequiresApproval) {
+    return ["Approve delivery. The package is drafted and has not been sent."];
+  }
+  if (input.status === "generating") return [];
+  return [];
+}
+
+export function boardHint(status: "new" | "needs_review" | "approved" | "generating" | "qa" | "delivered" | "rejected"): string {
+  if (status === "new" || status === "needs_review") return "Waiting on you";
+  if (status === "approved" || status === "generating") return "Running";
+  if (status === "qa") return "Approve delivery";
+  if (status === "delivered") return "Delivered";
+  return "Stopped";
 }

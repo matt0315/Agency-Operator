@@ -7,6 +7,8 @@ import { redact } from "@/lib/mode";
 import {
   addRevision,
   advanceRecording,
+  maybeAutoApplyRevision,
+  runAutomatic,
   agentAttemptDelivery,
   analyzeJob,
   applyRevision,
@@ -60,6 +62,11 @@ export async function createJobAction(formData: FormData) {
     deadlineAt: deadline ? new Date(deadline).toISOString() : new Date(Date.now() + 72 * 3_600_000).toISOString(),
     templateId: String(formData.get("template") || "") || null,
   });
+  try {
+    await runAutomatic(job.id);
+  } catch (error) {
+    fail(error);
+  }
   refresh(job.id);
   redirect(`/jobs/${job.id}`);
 }
@@ -168,7 +175,8 @@ export async function retryAction(id: string, jobId: string) {
 }
 
 export async function revisionAction(jobId: string, note: string) {
-  addRevision(jobId, note);
+  const revision = addRevision(jobId, note);
+  await maybeAutoApplyRevision(revision.id);
   refresh(jobId);
 }
 

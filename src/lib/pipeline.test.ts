@@ -14,7 +14,7 @@ test("seeded demos walk the supervised pipeline in mock mode", async () => {
   delete process.env.HF_API_KEY_SECRET;
 
   const service = await import("./service");
-  const { getBundle, resetDemo, advanceRecording, agentAttemptDelivery, approveDelivery, dashboardJobs } = service;
+  const { getBundle, resetDemo, advanceRecording, agentAttemptDelivery, approveDelivery, dashboardJobs, createJob, runAutomatic } = service;
 
   const jobs = dashboardJobs();
   assert.ok(jobs.some((job: { id: string }) => job.id === "job_rain"));
@@ -72,4 +72,38 @@ test("seeded demos walk the supervised pipeline in mock mode", async () => {
   assert.ok(approved?.workflow);
   assert.equal(approved.job.recordingGate, "generation");
   assert.equal(approved.workflow.steps.find((step: { id: string }) => step.id === "orbit")?.modelId, "bytedance/seedance-2.5/image-to-video");
+
+  const clean = createJob({
+    title: "Harbor dusk",
+    source: "Email",
+    rawBrief: "A quiet 16:9 harbor at dusk, 8 seconds, no people and no readable type. The dusk photos are the reference.",
+    clientName: "Harbor",
+    channel: "direct_email",
+    clientPriceMicros: 900_000_000,
+    deadlineAt: new Date(Date.now() + 72 * 3_600_000).toISOString(),
+    templateId: "launch-video",
+  });
+  const ran = await runAutomatic(clean.id);
+  assert.match(ran, /approve delivery/i);
+  const done = getBundle(clean.id);
+  assert.equal(done?.job.status, "qa");
+  assert.ok((done?.generations.length ?? 0) > 0);
+  assert.ok(done?.messages.some((message: { kind: string; status: string }) => message.kind === "delivery" && message.status === "draft"));
+  assert.ok(done?.audit.some((entry: { summary: string }) => entry.summary.startsWith("Ran without a person")));
+
+  const held = createJob({
+    title: "Face spot",
+    source: "Email",
+    rawBrief: "An 8 second 16:9 video using my face as the spokesperson.",
+    clientName: "Face",
+    channel: "direct_email",
+    clientPriceMicros: 900_000_000,
+    deadlineAt: new Date(Date.now() + 72 * 3_600_000).toISOString(),
+    templateId: null,
+  });
+  const heldRun = await runAutomatic(held.id);
+  assert.match(heldRun, /Waiting on a person/);
+  const face = getBundle(held.id);
+  assert.equal(face?.job.status, "needs_review");
+  assert.equal(face?.generations.length, 0);
 });

@@ -36,7 +36,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Agency Operator
               </Link>
               <p className="mt-1 max-w-xl text-sm text-[var(--color-muted)]">
-                Paste a brief. Qualify it. Price it. Approve the ceiling. Then generate.
+                Paste a brief. The studio runs it inside your limits. You approve delivery.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

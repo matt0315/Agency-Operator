@@ -357,9 +357,9 @@ export function replaceStepModel(steps: RouteStep[], stepId: string, modelId: st
 
 export const ROUTE_STORY = [
   "Generate inexpensive concepts",
-  "Human chooses the frames that hold",
+  "Lock the frames that match the brief",
   "Make controlled keyframes",
   "Generate final motion",
   "Repair one continuity failure only if it stays inside the cap",
-  "Finish and QA",
+  "Draft delivery for approval",
 ];

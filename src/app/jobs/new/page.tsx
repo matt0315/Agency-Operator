@@ -7,7 +7,7 @@ export default function NewJobPage() {
     <main className="mx-auto max-w-3xl">
       <h1 className="text-2xl font-medium">New job</h1>
       <p className="mt-2 text-sm text-[var(--color-muted)]">
-        Paste a brief from Upwork, Fiverr, Contra, email, a sales call, or a direct form. Agency Operator does not scrape a marketplace, submit a proposal, accept a contract, or deliver through one.
+        Paste a brief from Upwork, Fiverr, Contra, email, a sales call, or a direct form. One paste, then watch. The studio analyzes, prices, routes, generates, repairs, and drafts delivery inside Autonomy Settings. It does not scrape a marketplace, submit a proposal, accept a contract, or deliver through one.
       </p>
       <form action={createJobAction} className="panel mt-4 space-y-3 p-4">
         <label className="block text-sm">Title<input name="title" required className="mt-1 w-full rounded border bg-transparent px-3 py-2" /></label>
@@ -37,7 +37,7 @@ export default function NewJobPage() {
             </select>
           </label>
         </div>
-        <button className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[#1a1208]" type="submit">Create job</button>
+        <button className="rounded-full bg-[var(--color-accent)] px-4 py-2 text-sm font-medium text-[#1a1208]" type="submit">Paste and run</button>
       </form>
     </main>
   );

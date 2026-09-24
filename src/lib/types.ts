@@ -305,6 +305,9 @@ export type AutoSendKey =
   | "feedbackRequests";
 
 export type AutonomySettings = {
+  fullyAutomaticWithinLimits: boolean;
+  autoRepair: boolean;
+  autoAdvanceGenerations: boolean;
   maxAutomaticSpendPerJobMicros: number;
   maxAutomaticSpendPerRepairMicros: number;
   maxAttemptsPerStep: number;
@@ -335,4 +338,5 @@ export type JobBundle = {
   ledger: LedgerEntry[];
   economics: Economics | null;
   mode: { analysis: "mock" | "live"; generation: "mock" | "live" };
+  settings: AutonomySettings;
 };
