@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#141210"/>
+  <rect x="180" y="160" width="1240" height="520" fill="#24282c"/>
+  <text x="48" y="822" fill="#f4f0e8" font-family="IBM Plex Sans, sans-serif" font-size="36">Motion</text>
+  <text x="48" y="860" fill="#a3988c" font-family="IBM Plex Sans, sans-serif" font-size="20">Mock output</text>
+</svg>

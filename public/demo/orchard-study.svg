@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <rect width="1600" height="900" fill="#10140f"/>
+  <rect x="80" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="89" cy="360" r="46" fill="#243628" opacity="0.9"/>
+<rect x="220" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="229" cy="360" r="54" fill="#243628" opacity="0.9"/>
+<rect x="360" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="369" cy="360" r="62" fill="#243628" opacity="0.9"/>
+<rect x="500" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="509" cy="360" r="46" fill="#243628" opacity="0.9"/>
+<rect x="640" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="649" cy="360" r="54" fill="#243628" opacity="0.9"/>
+<rect x="780" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="789" cy="360" r="62" fill="#243628" opacity="0.9"/>
+<rect x="920" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="929" cy="360" r="46" fill="#243628" opacity="0.9"/>
+<rect x="1060" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="1069" cy="360" r="54" fill="#243628" opacity="0.9"/>
+<rect x="1200" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="1209" cy="360" r="62" fill="#243628" opacity="0.9"/>
+<rect x="1340" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="1349" cy="360" r="46" fill="#243628" opacity="0.9"/>
+<rect x="1480" y="378" width="18" height="252" fill="#1a2418"/>
+<circle cx="1489" cy="360" r="54" fill="#243628" opacity="0.9"/>
+<rect x="0" y="612" width="1600" height="288" fill="#10160f"/>
+  <text x="48" y="822" fill="#f4f0e8" font-family="IBM Plex Sans, sans-serif" font-size="36">Orbit study — pacing only</text>
+  <text x="48" y="860" fill="#a3988c" font-family="IBM Plex Sans, sans-serif" font-size="20">Search · PixVerse V6 · mock</text>
+</svg>
