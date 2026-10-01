@@ -1,0 +1,15 @@
+node_modules
+.next
+out
+dist
+.env
+.env.local
+.dev.vars
+.open-next
+.wrangler
+data/*.sqlite
+data/*.sqlite-*
+data/assets
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
