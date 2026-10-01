@@ -3,8 +3,8 @@ import { readSettings } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
-export default function AutonomyPage() {
-  const settings = readSettings();
+export default async function AutonomyPage() {
+  const settings = await readSettings();
   return (
     <main className="mx-auto max-w-4xl space-y-4">
       <h1 className="text-2xl font-medium">Autonomy settings</h1>

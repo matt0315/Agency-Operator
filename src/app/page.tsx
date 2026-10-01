@@ -6,8 +6,8 @@ import { JOB_STATUSES, PIPELINE_LABEL } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
-export default function DashboardPage() {
-  const jobs = dashboardJobs();
+export default async function DashboardPage() {
+  const jobs = await dashboardJobs();
   const groups = JOB_STATUSES.map((status) => ({
     status,
     label: PIPELINE_LABEL[status],

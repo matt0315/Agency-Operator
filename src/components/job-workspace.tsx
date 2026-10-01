@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import {
   analyzeAction,
   applyRevisionAction,
@@ -34,6 +35,14 @@ export function JobWorkspace({ bundle, initialTab = "Brief" }: { bundle: JobBund
   const [note, setNote] = useState("Make the final reveal warmer and more hopeful.");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, start] = useTransition();
+  const router = useRouter();
+  useEffect(() => {
+    if (bundle.job.status !== "generating") return;
+    const timer = window.setInterval(() => {
+      void fetch(`/api/jobs/${bundle.job.id}/poll`, { method: "POST" }).then(() => router.refresh());
+    }, 4000);
+    return () => window.clearInterval(timer);
+  }, [bundle.job.id, bundle.job.status, router]);
   const analysis = bundle.analyses.filter((row) => row.kind === "human").at(-1) ?? bundle.analyses.at(-1);
   const steps = bundle.workflow?.steps ?? [];
   const waits = openWaits({

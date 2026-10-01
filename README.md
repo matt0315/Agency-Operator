@@ -68,7 +68,7 @@ The adapter uses the documented REST lifecycle rather than `@higgsfield/client`.
 - Statuses: `queued`, `in_progress`, `completed`, `failed`, `nsfw`, `canceled`
 - Cancel: `POST` the `cancel_url` only while status is `queued` (202 accepted, 400 once processing has started)
 - Failed, NSFW, and canceled requests are not billed in the internal ledger
-- Completed files are copied into `data/assets` because provider URLs are temporary
+- Completed files are stored because provider URLs are temporary. Local dev writes `data/assets`. On Cloudflare they go to the R2 bucket `agency-operator-assets` and are served from the authenticated route `/api/assets/:id`.
 - If polling exceeds `POLL_TIMEOUT_MS`, the app status becomes `timed_out` and the provider status is left as-is
 - Webhooks: `POST /api/higgsfield/webhook?token=$HF_WEBHOOK_TOKEN`. The route rejects requests when the token is missing. Polling remains the local path, because a laptop is not a public HTTPS endpoint.
 
@@ -95,7 +95,74 @@ Two extra fixtures fill the board: a rejected celebrity-voice request, and an un
 - `src/lib/provider.ts` — Higgsfield REST adapter and mock completion
 - `src/lib/qa.ts` — checklist and repair recommendation
 - `src/lib/autonomy.ts` — spend caps, message policy, pause conditions
-- `src/lib/db.ts` — sqlite behind a repository module (`node:sqlite`). Swap this file for Postgres later.
+- `src/lib/db.ts` — async repository. `npm run dev` uses a local `node:sqlite` file. Cloudflare Workers use the D1 binding `DB`.
 - `src/lib/templates.ts` — Launch Video, UGC Ad Pack, Localization Pack
 
 Secrets and the sqlite file stay out of git. See `.env.example`.
+
+## Deploy to Cloudflare
+
+Production is a Next.js app on Cloudflare Workers through the OpenNext adapter (`@opennextjs/cloudflare`). The Worker name is `agency-operator`. `wrangler.jsonc` attaches `aiautomators.com.au` and `www.aiautomators.com.au` as custom domains, binds D1 database `agency-operator` as `DB`, and binds R2 bucket `agency-operator-assets` as `ASSETS_BUCKET`.
+
+Deploy from a machine that has Wrangler and a Cloudflare API token. This repository does not deploy itself.
+
+The token that can deploy cannot run D1 commands. Apply the SQL files yourself, in this order, against the remote D1 database `agency-operator` (id `a2fba81d-a3f2-465d-a4ed-c8621e39168f`):
+
+1. `migrations/0001_init.sql` — tables
+2. `migrations/0002_seed.sql` — both demos, the reject and unanalyzed fixtures, service templates, and autonomy defaults
+
+Both files are idempotent. Run them before the first login. The Worker does not migrate D1 on boot.
+
+If a token later gains D1 access, the same files can be applied with:
+
+```bash
+npx wrangler d1 execute agency-operator --remote --file=migrations/0001_init.sql
+npx wrangler d1 execute agency-operator --remote --file=migrations/0002_seed.sql
+```
+
+The current deploy token cannot run those two commands. Execute the SQL files directly.
+
+Set secrets from the repo root. Wrangler prompts for each value and does not print it back. The site returns 503 until both required secrets exist, including when `APP_MODE=mock`.
+
+```bash
+npx wrangler secret put OPERATOR_PASSWORD
+npx wrangler secret put SESSION_SECRET
+```
+
+Optional. Leave them unset to stay in mock mode (the header shows a Mock mode badge). Set them only when you want live model calls.
+
+```bash
+npx wrangler secret put OPENAI_API_KEY
+npx wrangler secret put OPENAI_MODEL
+npx wrangler secret put HF_API_KEY_ID
+npx wrangler secret put HF_API_KEY_SECRET
+npx wrangler secret put HF_API_BASE
+npx wrangler secret put HF_WEBHOOK_TOKEN
+npx wrangler secret put APP_MODE
+npx wrangler secret put POLL_TIMEOUT_MS
+```
+
+`APP_MODE=mock` forces mock even if keys are present. Unset `APP_MODE` uses live analysis only when `OPENAI_API_KEY` is set, and live generation only when both Higgsfield secrets are set.
+
+Deploy:
+
+```bash
+npm install
+npm run deploy
+```
+
+`npm run deploy` is `opennextjs-cloudflare build && opennextjs-cloudflare deploy`.
+
+Local `npm run dev` still uses the sqlite file. It skips the password only when `APP_MODE=mock` and `NODE_ENV=development`. Preview the Worker runtime locally with a gitignored `.dev.vars` (copy `.dev.vars.example`) and a local D1:
+
+```bash
+npx wrangler d1 execute agency-operator --local --file=migrations/0001_init.sql
+npx wrangler d1 execute agency-operator --local --file=migrations/0002_seed.sql
+npm run preview
+```
+
+Login is one operator password, checked with a SHA-256 digest and a constant-time compare. The session cookie `ao_session` is HttpOnly and SameSite=Lax, signed with `SESSION_SECRET`. It is marked Secure on HTTPS, which the custom domain is. Eight failed attempts per IP in 15 minutes are rejected. Every page and API route except `/login`, `/api/login`, and static assets requires the cookie. That includes `POST /api/higgsfield/webhook`. Live status still arrives through the browser poll below. A provider callback would need its own exemption later; the route already rejects requests when `HF_WEBHOOK_TOKEN` is unset.
+
+Generation does not hold one request open for the provider poll window. While a job status is `generating`, the browser calls `POST /api/jobs/:id/poll` every few seconds.
+
+A local OpenNext preview bundle was about 1.2 MB gzipped (about 5.6 MB uncompressed), under the Workers script size limit.

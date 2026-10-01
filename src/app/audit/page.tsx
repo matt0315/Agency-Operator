@@ -3,8 +3,8 @@ import { globalAudit } from "@/lib/service";
 
 export const dynamic = "force-dynamic";
 
-export default function AuditPage() {
-  const entries = globalAudit();
+export default async function AuditPage() {
+  const entries = await globalAudit();
   return (
     <main>
       <h1 className="mb-4 text-2xl font-medium">Audit log</h1>

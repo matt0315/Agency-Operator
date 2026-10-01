@@ -75,21 +75,23 @@ function uid(prefix: string): string {
   return `${prefix}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
-export function ensureReady(): void {
-  if (countJobs() === 0) seedDatabase();
+export async function ensureReady() {
+  const { hydrateProcessEnv } = await import("./cloudflare-env");
+  await hydrateProcessEnv();
+  if ((await countJobs()) === 0) await seedDatabase();
 }
 
-function audit(jobId: string | null, kind: string, summary: string, payload: Record<string, unknown> = {}): void {
-  insertAudit({ id: uid("audit"), jobId, kind, summary, payload, createdAt: now() });
+async function audit(jobId: string | null, kind: string, summary: string, payload: Record<string, unknown> = {}) {
+  await insertAudit({ id: uid("audit"), jobId, kind, summary, payload, createdAt: now() });
 }
 
-function latestAnalysis(jobId: string): StoredAnalysis | null {
-  const rows = listAnalyses(jobId);
+async function latestAnalysis(jobId: string) {
+  const rows = await listAnalyses(jobId);
   return rows.filter((row) => row.kind === "human").at(-1) ?? rows.filter((row) => row.kind === "model").at(-1) ?? null;
 }
 
-function economicsFor(job: JobRecord, steps: RouteStep[]) {
-  const analysis = latestAnalysis(job.id);
+async function economicsFor(job: JobRecord, steps: RouteStep[]) {
+  const analysis = await latestAnalysis(job.id);
   if (!analysis) return null;
   return decideJob({
     analysis: analysis.analysis,
@@ -103,33 +105,33 @@ function economicsFor(job: JobRecord, steps: RouteStep[]) {
   }).economics;
 }
 
-export function getBundle(id: string): JobBundle | null {
-  ensureReady();
-  const job = getJob(id);
+export async function getBundle(id: string) {
+  await ensureReady();
+  const job = await getJob(id);
   if (!job) return null;
-  const client = getClient(job.clientId);
+  const client = await getClient(job.clientId);
   if (!client) return null;
-  const workflow = getWorkflow(id);
+  const workflow = await getWorkflow(id);
   return {
     job,
     client,
-    analyses: listAnalyses(id),
+    analyses: await listAnalyses(id),
     workflow,
-    generations: listGenerations(id),
-    qaReports: listQa(id),
-    revisions: listRevisions(id),
-    messages: listMessages(id),
-    audit: listAudit(id),
-    ledger: listLedger(id),
-    economics: workflow ? economicsFor(job, workflow.steps) : null,
+    generations: await listGenerations(id),
+    qaReports: await listQa(id),
+    revisions: await listRevisions(id),
+    messages: await listMessages(id),
+    audit: await listAudit(id),
+    ledger: await listLedger(id),
+    economics: workflow ? await economicsFor(job, workflow.steps) : null,
     mode: { analysis: analysisMode(), generation: generationMode() },
-    settings: getAutonomy(),
+    settings: await getAutonomy(),
   };
 }
 
-export function dashboardJobs(): JobRecord[] {
-  ensureReady();
-  return listJobs();
+export async function dashboardJobs() {
+  await ensureReady();
+  return await listJobs();
 }
 
 const blankMemory = (): ClientMemory => ({
@@ -145,7 +147,7 @@ const blankMemory = (): ClientMemory => ({
   likenessConsent: "None on file.",
 });
 
-export function createJob(input: {
+export async function createJob(input: {
   title: string;
   source: string;
   rawBrief: string;
@@ -154,11 +156,11 @@ export function createJob(input: {
   clientPriceMicros: number;
   deadlineAt: string;
   templateId: string | null;
-}): JobRecord {
-  ensureReady();
+}) {
+  await ensureReady();
   const created = now();
   const clientId = uid("client");
-  upsertClient({ id: clientId, name: input.clientName || "Unnamed client", channel: input.channel, memory: blankMemory() });
+  await upsertClient({ id: clientId, name: input.clientName || "Unnamed client", channel: input.channel, memory: blankMemory() });
   const template = getTemplate(input.templateId);
   const job: JobRecord = {
     id: uid("job"),
@@ -179,12 +181,12 @@ export function createJob(input: {
     createdAt: created,
     updatedAt: created,
   };
-  insertJob(job);
-  audit(job.id, "intake", "Brief pasted into Agency Operator. No marketplace was contacted.", { source: job.source });
+  await insertJob(job);
+  await audit(job.id, "intake", "Brief pasted into Agency Operator. No marketplace was contacted.", { source: job.source });
   return job;
 }
 
-function persistRoute(job: JobRecord, analysis: BriefAnalysis, kind: StoredAnalysis["kind"]): StoredAnalysis {
+async function persistRoute(job: JobRecord, analysis: BriefAnalysis, kind: StoredAnalysis["kind"]) {
   const steps = routeFromAnalysis(analysis, `${job.title}\n${analysis.conciseSummary}`);
   const decision = decideJob({
     analysis,
@@ -197,9 +199,9 @@ function persistRoute(job: JobRecord, analysis: BriefAnalysis, kind: StoredAnaly
     deadlineAt: job.deadlineAt,
   });
   const stored: StoredAnalysis = { id: uid("analysis"), jobId: job.id, kind, analysis, decision, createdAt: now() };
-  insertAnalysis(stored);
-  const existing = getWorkflow(job.id);
-  saveWorkflow({
+  await insertAnalysis(stored);
+  const existing = await getWorkflow(job.id);
+  await saveWorkflow({
     id: existing?.id ?? uid("wf"),
     jobId: job.id,
     status: "draft",
@@ -209,35 +211,35 @@ function persistRoute(job: JobRecord, analysis: BriefAnalysis, kind: StoredAnaly
     updatedAt: now(),
   });
   const status = decision.decision === "reject" ? "rejected" : "needs_review";
-  updateJob(job.id, { status, recordingGate: job.recordingGate });
-  audit(job.id, "model_decision", `Deterministic decision: ${decision.decision}.`, {
+  await updateJob(job.id, { status, recordingGate: job.recordingGate });
+  await audit(job.id, "model_decision", `Deterministic decision: ${decision.decision}.`, {
     reasons: decision.reasons,
     advisory: analysis.decision,
   });
   return stored;
 }
 
-export async function analyzeJob(jobId: string): Promise<void> {
-  ensureReady();
-  const job = mustJob(jobId);
+export async function analyzeJob(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
   let analysis: BriefAnalysis;
   if (analysisMode() === "live") {
     analysis = await analyzeWithOpenAI({ title: job.title, brief: job.rawBrief, source: job.source });
-    audit(job.id, "model_decision", `OpenAI Responses analysis using ${process.env.OPENAI_MODEL || "gpt-6-astra"}.`, {});
+    await audit(job.id, "model_decision", `OpenAI Responses analysis using ${process.env.OPENAI_MODEL || "gpt-6-astra"}.`, {});
   } else {
     analysis = mockAnalyze(job.title, job.rawBrief);
-    audit(job.id, "model_decision", "Mock analysis. No OpenAI key in use.", {});
+    await audit(job.id, "model_decision", "Mock analysis. No OpenAI key in use.", {});
   }
-  persistRoute(job, analysis, "model");
+  await persistRoute(job, analysis, "model");
   if (analysis.questionsForClient[0]) {
-    recordMessage(job, {
+    await recordMessage(job, {
       kind: "intake_question",
       subject: "One question before production",
       body: analysis.questionsForClient[0],
       audience: "client",
     });
   }
-  recordMessage(job, {
+  await recordMessage(job, {
     kind: "proposal",
     subject: `Proposal — ${job.title}`,
     body: proposalBody(job, analysis),
@@ -245,21 +247,21 @@ export async function analyzeJob(jobId: string): Promise<void> {
   });
 }
 
-export function saveHumanAnalysis(jobId: string, raw: unknown): { ok: true } | { ok: false; error: string } {
-  ensureReady();
+export async function saveHumanAnalysis(jobId: string, raw: unknown) {
+  await ensureReady();
   const parsed = parseAnalysis(raw);
   if (!parsed.ok) return parsed;
-  const job = mustJob(jobId);
-  persistRoute(job, parsed.analysis, "human");
-  audit(job.id, "approval", "Human edited the analysis. The original model version is kept.", {});
+  const job = await mustJob(jobId);
+  await persistRoute(job, parsed.analysis, "human");
+  await audit(job.id, "approval", "Human edited the analysis. The original model version is kept.", {});
   return { ok: true };
 }
 
-export function approveWorkflow(jobId: string, actor: "human" | "automatic" = "human"): void {
-  ensureReady();
-  const job = mustJob(jobId);
-  const workflow = getWorkflow(jobId);
-  const analysis = latestAnalysis(jobId);
+export async function approveWorkflow(jobId: string, actor: "human" | "automatic" = "human") {
+  await ensureReady();
+  const job = await mustJob(jobId);
+  const workflow = await getWorkflow(jobId);
+  const analysis = await latestAnalysis(jobId);
   if (!workflow || !analysis) throw new Error("Analyze the brief before approval.");
   const decision = decideJob({
     analysis: analysis.analysis,
@@ -277,9 +279,9 @@ export function approveWorkflow(jobId: string, actor: "human" | "automatic" = "h
   if (decision.economics.overBudget) {
     throw new Error("Approval is blocked because generation plus contingency exceeds the production budget.");
   }
-  saveWorkflow({ ...workflow, status: "approved", approvedMaxMicros: job.maxProductionMicros, updatedAt: now() });
-  updateJob(jobId, { status: "approved" });
-  audit(
+  await saveWorkflow({ ...workflow, status: "approved", approvedMaxMicros: job.maxProductionMicros, updatedAt: now() });
+  await updateJob(jobId, { status: "approved" });
+  await audit(
     jobId,
     "approval",
     actor === "automatic"
@@ -289,28 +291,28 @@ export function approveWorkflow(jobId: string, actor: "human" | "automatic" = "h
   );
 }
 
-export async function runAutomatic(jobId: string): Promise<string> {
-  ensureReady();
-  const job = mustJob(jobId);
+export async function runAutomatic(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
   if (job.recordingGate) return "Recording mode stays stepped. Automatic run skipped.";
-  const settings = getAutonomy();
+  const settings = await getAutonomy();
   if (!settings.fullyAutomaticWithinLimits) {
-    audit(jobId, "escalation", "Waiting on a person: fully automatic within limits is off.", { actor: "waiting" });
+    await audit(jobId, "escalation", "Waiting on a person: fully automatic within limits is off.", { actor: "waiting" });
     return "Waiting on a person: fully automatic within limits is off.";
   }
   try {
     await analyzeJob(jobId);
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : "Analysis failed.");
-    audit(jobId, "escalation", `Waiting on a person: analysis failed. ${message}`, { actor: "waiting" });
-    updateJob(jobId, { status: "needs_review" });
+    await audit(jobId, "escalation", `Waiting on a person: analysis failed. ${message}`, { actor: "waiting" });
+    await updateJob(jobId, { status: "needs_review" });
     return message;
   }
-  audit(jobId, "model_decision", "Ran without a person: analyzed the brief and priced the route.", { actor: "automatic" });
-  const stored = latestAnalysis(jobId);
-  const workflow = getWorkflow(jobId);
+  await audit(jobId, "model_decision", "Ran without a person: analyzed the brief and priced the route.", { actor: "automatic" });
+  const stored = await latestAnalysis(jobId);
+  const workflow = await getWorkflow(jobId);
   if (!stored || !workflow) {
-    audit(jobId, "escalation", "Waiting on a person: analysis did not produce a route.", { actor: "waiting" });
+    await audit(jobId, "escalation", "Waiting on a person: analysis did not produce a route.", { actor: "waiting" });
     return "Waiting on a person: analysis did not produce a route.";
   }
   const gate = autoAdvanceDecision({
@@ -328,70 +330,72 @@ export async function runAutomatic(jobId: string): Promise<string> {
   });
   if (gate.action !== "run") {
     const summary = `Waiting on a person: ${gate.reasons.join(" ")}`;
-    audit(jobId, "escalation", summary, { actor: "waiting" });
+    await audit(jobId, "escalation", summary, { actor: "waiting" });
     return summary;
   }
   try {
-    approveWorkflow(jobId, "automatic");
+    await approveWorkflow(jobId, "automatic");
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : "Approval blocked.");
-    audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
+    await audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
     return message;
   }
   if (!settings.autoAdvanceGenerations) {
-    audit(jobId, "escalation", "Waiting on a person to start generation. The workflow is already approved.", { actor: "waiting" });
+    await audit(jobId, "escalation", "Waiting on a person to start generation. The workflow is already approved.", { actor: "waiting" });
     return "Waiting on a person to start generation.";
   }
   try {
-    await runApprovedSteps(jobId);
-    audit(jobId, "generation", "Ran without a person: generated the approved steps.", { actor: "automatic" });
-    await runQa(jobId);
-    audit(jobId, "repair", "Ran without a person: QA, and repair if it stayed inside the caps.", { actor: "automatic" });
-    draftDelivery(jobId);
-    audit(jobId, "message_draft", "Ran without a person: drafted the delivery package. It has not been sent.", { actor: "automatic" });
+    const stage = await resumeProduction(jobId);
+    if (stage !== "qa") {
+      await audit(jobId, "generation", "Ran without a person: submitted work. The browser will poll until the provider finishes.", { actor: "automatic" });
+      return "Generating. Status is polled from the job page so the request does not stay open.";
+    }
+    await audit(jobId, "generation", "Ran without a person: generated the approved steps.", { actor: "automatic" });
+    await audit(jobId, "repair", "Ran without a person: QA, and repair if it stayed inside the caps.", { actor: "automatic" });
+    await audit(jobId, "message_draft", "Ran without a person: drafted the delivery package. It has not been sent.", { actor: "automatic" });
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : "Automatic production stopped.");
-    audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
+    await audit(jobId, "escalation", `Waiting on a person: ${message}`, { actor: "waiting" });
     return message;
   }
-  if (getAutonomy().finalDeliveryRequiresApproval) {
-    audit(jobId, "escalation", "Waiting on a person: approve delivery. Final delivery has not been sent.", { actor: "waiting" });
+  if ((await getAutonomy()).finalDeliveryRequiresApproval) {
+    await audit(jobId, "escalation", "Waiting on a person: approve delivery. Final delivery has not been sent.", { actor: "waiting" });
     return "Waiting on a person: approve delivery.";
   }
   const channel = /upwork|fiverr|contra/i.test(job.source) ? "marketplace" : "direct";
   if (channel === "marketplace") {
-    audit(jobId, "escalation", "Waiting on a person: marketplace delivery is never sent by the agent.", { actor: "waiting" });
+    await audit(jobId, "escalation", "Waiting on a person: marketplace delivery is never sent by the agent.", { actor: "waiting" });
     return "Waiting on a person: marketplace delivery is never sent.";
   }
-  approveDelivery(jobId);
+  await approveDelivery(jobId);
   return "Delivered on a direct channel because final-delivery approval is off.";
 }
 
-export function rejectJob(jobId: string): void {
-  ensureReady();
-  updateJob(jobId, { status: "rejected" });
-  audit(jobId, "approval", "Human rejected the job.", {});
+export async function rejectJob(jobId: string) {
+  await ensureReady();
+  await updateJob(jobId, { status: "rejected" });
+  await audit(jobId, "approval", "Human rejected the job.", {});
 }
 
-export function overrideStep(jobId: string, stepId: string, modelId: string): void {
-  ensureReady();
-  const workflow = getWorkflow(jobId);
+export async function overrideStep(jobId: string, stepId: string, modelId: string) {
+  await ensureReady();
+  const workflow = await getWorkflow(jobId);
   if (!workflow) throw new Error("No workflow yet.");
   const steps = replaceStepModel(workflow.steps, stepId, modelId);
-  saveWorkflow({ ...workflow, steps, status: "draft", approvedMaxMicros: null, updatedAt: now() });
-  updateJob(jobId, { status: "needs_review" });
-  audit(jobId, "cost_change", `Model override on ${stepId} to ${modelId}. Approval is required again.`, {});
+  await saveWorkflow({ ...workflow, steps, status: "draft", approvedMaxMicros: null, updatedAt: now() });
+  await updateJob(jobId, { status: "needs_review" });
+  await audit(jobId, "cost_change", `Model override on ${stepId} to ${modelId}. Approval is required again.`, {});
 }
 
-export function updateCommercials(
+export async function updateCommercials(
   jobId: string,
   patch: Partial<Pick<JobRecord, "clientPriceMicros" | "sourceFeeBps" | "contingencyBps" | "targetMarginBps" | "maxProductionMicros">>,
-): void {
-  ensureReady();
-  const job = updateJob(jobId, patch);
-  const workflow = getWorkflow(jobId);
+) {
+  await ensureReady();
+  const job = await updateJob(jobId, patch);
+  const workflow = await getWorkflow(jobId);
   if (workflow?.status === "approved") {
-    const analysis = latestAnalysis(jobId);
+    const analysis = await latestAnalysis(jobId);
     if (analysis) {
       const decision = decideJob({
         analysis: analysis.analysis,
@@ -404,13 +408,13 @@ export function updateCommercials(
         deadlineAt: job.deadlineAt,
       });
       if (decision.decision !== "accept") {
-        saveWorkflow({ ...workflow, status: "draft", updatedAt: now() });
-        updateJob(jobId, { status: "needs_review" });
-        audit(jobId, "escalation", "Commercial change paused an approved job for another look.", { decision: decision.decision });
+        await saveWorkflow({ ...workflow, status: "draft", updatedAt: now() });
+        await updateJob(jobId, { status: "needs_review" });
+        await audit(jobId, "escalation", "Commercial change paused an approved job for another look.", { decision: decision.decision });
       }
     }
   }
-  audit(jobId, "cost_change", "Client price, fee, contingency, or production ceiling changed.", patch);
+  await audit(jobId, "cost_change", "Client price, fee, contingency, or production ceiling changed.", patch);
 }
 
 function mockAssetFor(step: RouteStep, job: JobRecord): { url: string; kind: "image" | "video" } {
@@ -448,29 +452,59 @@ function buildProviderInput(step: RouteStep, referenceUrl: string | null): Recor
   return input;
 }
 
-export async function runApprovedSteps(jobId: string): Promise<void> {
-  ensureReady();
-  const job = mustJob(jobId);
-  const workflow = getWorkflow(jobId);
+function settled(status: string): boolean {
+  return status === "completed" || status === "failed" || status === "nsfw" || status === "canceled" || status === "timed_out";
+}
+
+export async function runApprovedSteps(jobId: string): Promise<boolean> {
+  await ensureReady();
+  const job = await mustJob(jobId);
+  const workflow = await getWorkflow(jobId);
   if (!workflow || workflow.status !== "approved") throw new Error("Approve the workflow before generating.");
-  updateJob(jobId, { status: "generating" });
+  if (job.status !== "generating" && job.status !== "qa") await updateJob(jobId, { status: "generating" });
   let reference: string | null = null;
   for (const step of workflow.steps.filter((item) => !item.conditional)) {
+    const prior = (await listGenerations(job.id)).filter((item) => item.stepId === step.id).at(-1);
+    if (prior && !settled(prior.appStatus)) {
+      const refreshed = await refreshGeneration(prior.id);
+      if (!settled(refreshed.appStatus)) return false;
+      const asset = refreshed.output?.assets[0];
+      if (asset) reference = asset.sourceUrl;
+      continue;
+    }
+    if (prior?.appStatus === "completed") {
+      const asset = prior.output?.assets[0];
+      if (asset) reference = asset.sourceUrl;
+      continue;
+    }
     const generation = await runStep(job, step, reference, null);
     const asset = generation.output?.assets[0];
     if (asset) reference = asset.sourceUrl;
+    if (!settled(generation.appStatus)) return false;
   }
-  updateJob(jobId, { status: "qa" });
-  recordMessage(job, {
-    kind: "progress",
-    subject: "Production pass is in QA",
-    body: `The approved steps for ${job.title} have a first pass. Nothing has been delivered.`,
-    audience: "client",
-  });
+  await updateJob(jobId, { status: "qa" });
+  const already = (await listMessages(job.id)).some((item) => item.kind === "progress" && item.subject === "Production pass is in QA");
+  if (!already) {
+    await recordMessage(job, {
+      kind: "progress",
+      subject: "Production pass is in QA",
+      body: `The approved steps for ${job.title} have a first pass. Nothing has been delivered.`,
+      audience: "client",
+    });
+  }
+  return true;
 }
 
-async function runStep(job: JobRecord, step: RouteStep, reference: string | null, retryOf: string | null): Promise<GenerationRecord> {
-  const settings = getAutonomy();
+export async function resumeProduction(jobId: string): Promise<string> {
+  const finished = await runApprovedSteps(jobId);
+  if (!finished) return "generating";
+  if ((await listQa(jobId)).length === 0) await runQa(jobId);
+  if (!(await listMessages(jobId)).some((item) => item.kind === "delivery")) await draftDelivery(jobId);
+  return "qa";
+}
+
+async function runStep(job: JobRecord, step: RouteStep, reference: string | null, retryOf: string | null) {
+  const settings = await getAutonomy();
   const family = getModel(step.modelId)?.family ?? "";
   if (!settings.allowedModelFamilies.includes(family)) {
     throw new Error(`${step.modelName} is outside the allowed model families.`);
@@ -479,11 +513,11 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
     throw new Error("This step exceeds the attempt cap in Autonomy Settings.");
   }
   const passMicros = step.unitCostMicros == null ? null : step.unitCostMicros * step.quantity;
-  const spent = jobSpendMicros(job.id);
+  const spent = await jobSpendMicros(job.id);
   if (passMicros != null && spent + passMicros > settings.maxAutomaticSpendPerJobMicros && job.recordingGate) {
     throw new Error("This step would cross the automatic per-job spend cap.");
   }
-  if (passMicros != null && workflowCeiling(job, passMicros)) {
+  if (passMicros != null && await workflowCeiling(job, passMicros)) {
     throw new Error("This step would cross the approved production ceiling.");
   }
   const mode = generationMode();
@@ -511,7 +545,7 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
     createdAt: created,
     updatedAt: created,
   };
-  insertGeneration(row);
+  await insertGeneration(row);
 
   if (mode === "mock") {
     const estimate = mockEstimate(step.modelId, step.quantity);
@@ -536,11 +570,11 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
       rawNote: "Mock mode completed locally. No provider request was sent.",
     };
     row.output.assets = await persistAssets(job.id, id, row.output.assets);
-    updateGeneration(row);
+    await updateGeneration(row);
     if (row.actualMicros) {
-      insertLedger({ id: uid("led"), jobId: job.id, generationId: id, label: `${step.modelName} completed`, amountMicros: row.actualMicros, createdAt: now() });
+      await insertLedger({ id: uid("led"), jobId: job.id, generationId: id, label: `${step.modelName} completed`, amountMicros: row.actualMicros, createdAt: now() });
     }
-    audit(job.id, "generation", `${step.modelName} completed in mock mode.`, { stepId: step.id, actualMicros: row.actualMicros });
+    await audit(job.id, "generation", `${step.modelName} completed in mock mode.`, { stepId: step.id, actualMicros: row.actualMicros });
     return row;
   }
 
@@ -549,8 +583,8 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
     row.providerStatus = "failed";
     row.actualMicros = 0;
     row.error = "Live image or video inputs need a public HTTPS URL. This reference is still on local storage.";
-    updateGeneration(row);
-    audit(job.id, "escalation", row.error, { stepId: step.id });
+    await updateGeneration(row);
+    await audit(job.id, "escalation", row.error, { stepId: step.id });
     return row;
   }
   try {
@@ -561,7 +595,7 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
       row.providerStatus = "failed";
       row.actualMicros = 0;
       row.error = "The estimate endpoint did not return a USD amount. The step was not submitted.";
-      updateGeneration(row);
+      await updateGeneration(row);
       return row;
     }
     const submitted = await submitRequest(step.modelId, input);
@@ -570,26 +604,26 @@ async function runStep(job: JobRecord, step: RouteStep, reference: string | null
     row.cancelUrl = submitted.cancelUrl;
     row.providerStatus = submitted.status;
     row.appStatus = submitted.status;
-    updateGeneration(row);
-    audit(job.id, "generation", `Submitted ${step.modelName}.`, { requestId: submitted.requestId });
-    return refreshGeneration(row.id);
+    await updateGeneration(row);
+    await audit(job.id, "generation", `Submitted ${step.modelName}.`, { requestId: submitted.requestId });
+    return await refreshGeneration(row.id);
   } catch (error) {
     row.appStatus = "failed";
     row.providerStatus = "failed";
     row.actualMicros = 0;
     row.error = redact(error instanceof Error ? error.message : "Generation failed.");
-    updateGeneration(row);
+    await updateGeneration(row);
     return row;
   }
 }
 
-function workflowCeiling(job: JobRecord, additional: number): boolean {
-  return jobSpendMicros(job.id) + additional > job.maxProductionMicros;
+async function workflowCeiling(job: JobRecord, additional: number) {
+  return await jobSpendMicros(job.id) + additional > job.maxProductionMicros;
 }
 
-export async function refreshGeneration(id: string): Promise<GenerationRecord> {
-  ensureReady();
-  const row = getGeneration(id);
+export async function refreshGeneration(id: string) {
+  await ensureReady();
+  const row = await getGeneration(id);
   if (!row) throw new Error("Generation not found.");
   if (row.provider === "mock") return row;
   if (!row.statusUrl || !row.providerStatus || isTerminal(row.providerStatus)) return row;
@@ -597,8 +631,8 @@ export async function refreshGeneration(id: string): Promise<GenerationRecord> {
   if (Date.now() - new Date(row.createdAt).getTime() > timeout) {
     row.appStatus = "timed_out";
     row.error = "Application poll timeout. The provider status was left unchanged.";
-    updateGeneration(row);
-    audit(row.jobId, "generation", "Polling timed out inside Agency Operator. This is not a provider failure.", { providerStatus: row.providerStatus });
+    await updateGeneration(row);
+    await audit(row.jobId, "generation", "Polling timed out inside Agency Operator. This is not a provider failure.", { providerStatus: row.providerStatus });
     return row;
   }
   const status = await fetchStatus(row.statusUrl);
@@ -611,27 +645,27 @@ export async function refreshGeneration(id: string): Promise<GenerationRecord> {
     const actual = status.actualUsdMicros ?? row.estimateMicros ?? 0;
     row.actualMicros = actual;
     if (actual > 0) {
-      insertLedger({ id: uid("led"), jobId: row.jobId, generationId: row.id, label: "Provider completed", amountMicros: actual, createdAt: now() });
+      await insertLedger({ id: uid("led"), jobId: row.jobId, generationId: row.id, label: "Provider completed", amountMicros: actual, createdAt: now() });
     }
   } else if (isTerminal(status.providerStatus)) {
     row.actualMicros = 0;
-    audit(row.jobId, "cost_change", `${status.providerStatus} generation was not billed.`, { generationId: row.id });
+    await audit(row.jobId, "cost_change", `${status.providerStatus} generation was not billed.`, { generationId: row.id });
   }
-  updateGeneration(row);
+  await updateGeneration(row);
   return row;
 }
 
-export async function cancelGeneration(id: string): Promise<string> {
-  ensureReady();
-  const row = getGeneration(id);
+export async function cancelGeneration(id: string) {
+  await ensureReady();
+  const row = await getGeneration(id);
   if (!row) throw new Error("Generation not found.");
   if (row.providerStatus !== "queued") return "Cancellation is only available while the provider status is queued.";
   if (row.provider === "mock") {
     row.providerStatus = "canceled";
     row.appStatus = "canceled";
     row.actualMicros = 0;
-    updateGeneration(row);
-    audit(row.jobId, "generation", "Mock generation canceled before it ran. Not billed.", {});
+    await updateGeneration(row);
+    await audit(row.jobId, "generation", "Mock generation canceled before it ran. Not billed.", {});
     return "Canceled.";
   }
   if (!row.cancelUrl) return "This request has no cancel URL.";
@@ -640,58 +674,58 @@ export async function cancelGeneration(id: string): Promise<string> {
     row.providerStatus = "canceled";
     row.appStatus = "canceled";
     row.actualMicros = 0;
-    updateGeneration(row);
-    audit(row.jobId, "generation", "Queued provider request canceled.", {});
+    await updateGeneration(row);
+    await audit(row.jobId, "generation", "Queued provider request canceled.", {});
   }
   return result.reason;
 }
 
-export async function retryGeneration(id: string): Promise<void> {
-  ensureReady();
-  const prior = getGeneration(id);
+export async function retryGeneration(id: string) {
+  await ensureReady();
+  const prior = await getGeneration(id);
   if (!prior) throw new Error("Generation not found.");
-  const job = mustJob(prior.jobId);
-  const workflow = getWorkflow(job.id);
+  const job = await mustJob(prior.jobId);
+  const workflow = await getWorkflow(job.id);
   const step = workflow?.steps.find((item) => item.id === prior.stepId);
   if (!step) throw new Error("The original step is gone.");
   await runStep(job, step, null, prior.id);
-  audit(job.id, "generation", "Retry created a new generation and left the failed attempt in place.", { retryOf: prior.id });
+  await audit(job.id, "generation", "Retry created a new generation and left the failed attempt in place.", { retryOf: prior.id });
 }
 
-export async function runQa(jobId: string): Promise<void> {
-  ensureReady();
-  const job = mustJob(jobId);
-  const analysis = latestAnalysis(jobId);
-  const workflow = getWorkflow(jobId);
+export async function runQa(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
+  const analysis = await latestAnalysis(jobId);
+  const workflow = await getWorkflow(jobId);
   if (!analysis || !workflow) throw new Error("QA needs an analysis and a workflow.");
-  updateJob(jobId, { status: "qa" });
-  for (const generation of listGenerations(jobId)) {
+  await updateJob(jobId, { status: "qa" });
+  for (const generation of await listGenerations(jobId)) {
     if (generation.appStatus !== "completed" && generation.appStatus !== "failed") continue;
-    if (listQa(jobId).some((report) => report.generationId === generation.id)) continue;
+    if ((await listQa(jobId)).some((report) => report.generationId === generation.id)) continue;
     const step = workflow.steps.find((item) => item.id === generation.stepId);
     const report = evaluateGeneration({ analysis: analysis.analysis, step, generation });
-    insertQa({ id: uid("qa"), jobId, createdAt: now(), ...report });
+    await insertQa({ id: uid("qa"), jobId, createdAt: now(), ...report });
     if (report.verdict === "needs_controlled_edit") {
       await maybeRepair(job, workflow.steps, report.failedComponent ?? "continuity");
     }
   }
-  audit(jobId, "repair", "QA compared outputs with the approved brief.", {});
+  await audit(jobId, "repair", "QA compared outputs with the approved brief.", {});
 }
 
-async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: string): Promise<void> {
-  if (!getAutonomy().autoRepair) {
-    recordMessage(job, {
+async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: string) {
+  if (!(await getAutonomy()).autoRepair) {
+    await recordMessage(job, {
       kind: "escalation",
       subject: "Repair is waiting",
       body: `${failedComponent} failed. Auto-repair is off, so a person chooses the next edit.`,
       audience: "human",
     });
-    audit(job.id, "escalation", "Waiting on a person: auto-repair is off.", { actor: "waiting" });
+    await audit(job.id, "escalation", "Waiting on a person: auto-repair is off.", { actor: "waiting" });
     return;
   }
   const repair = steps.find((step) => step.conditional && step.role === "finish");
   if (!repair) {
-    recordMessage(job, {
+    await recordMessage(job, {
       kind: "escalation",
       subject: "QA needs a person",
       body: `${failedComponent} failed and the route has no priced repair step.`,
@@ -703,17 +737,17 @@ async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: 
   const family = getModel(repair.modelId)?.family ?? "";
   const gate = repairAllowed({
     incrementalMicros: incremental,
-    jobSpendMicros: jobSpendMicros(job.id),
+    jobSpendMicros: await jobSpendMicros(job.id),
     attempts: 1,
     family,
-    settings: getAutonomy(),
+    settings: await getAutonomy(),
     introducesRightsIssue: false,
   });
-  audit(job.id, "repair", gate.ok ? `Auto repair: ${failedComponent}.` : `Repair escalated: ${gate.reason}`, {
+  await audit(job.id, "repair", gate.ok ? `Auto repair: ${failedComponent}.` : `Repair escalated: ${gate.reason}`, {
     incrementalMicros: incremental,
   });
   if (!gate.ok) {
-    recordMessage(job, {
+    await recordMessage(job, {
       kind: "escalation",
       subject: "Repair needs approval",
       body: `${failedComponent}. ${gate.reason}`,
@@ -722,7 +756,7 @@ async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: 
     return;
   }
   const generation = await runStep(job, { ...repair, attempts: 1, settings: { ...repair.settings, qaScript: "" } }, null, null);
-  insertLedger({
+  await insertLedger({
     id: uid("lednote"),
     jobId: job.id,
     generationId: generation.id,
@@ -730,7 +764,7 @@ async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: 
     amountMicros: 0,
     createdAt: now(),
   });
-  recordMessage(job, {
+  await recordMessage(job, {
     kind: "progress",
     subject: "One shot was repaired",
     body: `The smallest failed piece was ${failedComponent}. A targeted edit ran inside the repair cap. The rest of the film was left alone.`,
@@ -738,14 +772,14 @@ async function maybeRepair(job: JobRecord, steps: RouteStep[], failedComponent: 
   });
 }
 
-export function addRevision(jobId: string, note: string): RevisionRecord {
-  ensureReady();
-  const job = mustJob(jobId);
+export async function addRevision(jobId: string, note: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
   const template = getTemplate(job.templateId);
-  const used = listRevisions(jobId).filter((row) => row.classification === "included" && row.approval !== "rejected").length;
+  const used = (await listRevisions(jobId)).filter((row) => row.classification === "included" && row.approval !== "rejected").length;
   const remaining = (template?.includedRevisions ?? 2) - used;
   const classified = classify(note, remaining);
-  const workflow = getWorkflow(jobId);
+  const workflow = await getWorkflow(jobId);
   const repair = workflow?.steps.find((step) => step.id === "repair" || step.conditional);
   const incremental = repair ? stepCostMicros({ ...repair, attempts: 1 }) : null;
   const row: RevisionRecord = {
@@ -761,8 +795,8 @@ export function addRevision(jobId: string, note: string): RevisionRecord {
     appliedGenerationId: null,
     createdAt: now(),
   };
-  insertRevision(row);
-  recordMessage(job, {
+  await insertRevision(row);
+  await recordMessage(job, {
     kind: classified.classification === "scope_change" ? "change_order" : "revision",
     subject: classified.classification === "scope_change" ? "Change order" : "Revision read",
     body:
@@ -771,37 +805,37 @@ export function addRevision(jobId: string, note: string): RevisionRecord {
         : `“${note}” maps to ${classified.affected}. It is an included revision. Expected incremental generation cost is on the revision row.`,
     audience: "human",
   });
-  audit(jobId, classified.classification === "scope_change" ? "escalation" : "revision", row.recommendedAction, {
+  await audit(jobId, classified.classification === "scope_change" ? "escalation" : "revision", row.recommendedAction, {
     incrementalMicros: row.expectedIncrementalMicros,
     actor: classified.classification === "scope_change" ? "waiting" : "automatic",
   });
   return row;
 }
 
-export async function maybeAutoApplyRevision(revisionId: string): Promise<void> {
-  ensureReady();
-  const settings = getAutonomy();
-  const revision = listJobs().flatMap((job) => listRevisions(job.id)).find((item) => item.id === revisionId);
+export async function maybeAutoApplyRevision(revisionId: string) {
+  await ensureReady();
+  const settings = await getAutonomy();
+  const revision = (await Promise.all((await listJobs()).map((job) => listRevisions(job.id)))).flat().find((item) => item.id === revisionId);
   if (!revision || revision.classification !== "included") return;
-  const job = mustJob(revision.jobId);
+  const job = await mustJob(revision.jobId);
   if (job.recordingGate || !settings.fullyAutomaticWithinLimits || !settings.autoRepair) return;
-  const workflow = getWorkflow(job.id);
+  const workflow = await getWorkflow(job.id);
   const step = workflow?.steps.find((item) => item.id === revision.affectedStepId) ?? workflow?.steps.find((item) => item.conditional);
   const family = getModel(step?.modelId ?? "")?.family ?? "";
   const gate = repairAllowed({
     incrementalMicros: revision.expectedIncrementalMicros,
-    jobSpendMicros: jobSpendMicros(job.id),
+    jobSpendMicros: await jobSpendMicros(job.id),
     attempts: 1,
     family,
     settings,
     introducesRightsIssue: false,
   });
   if (!gate.ok) {
-    audit(job.id, "escalation", `Waiting on a person: ${gate.reason}`, { actor: "waiting" });
+    await audit(job.id, "escalation", `Waiting on a person: ${gate.reason}`, { actor: "waiting" });
     return;
   }
   await applyRevision(revisionId);
-  audit(job.id, "repair", "Ran without a person: applied an included revision inside the spend cap.", { actor: "automatic" });
+  await audit(job.id, "repair", "Ran without a person: applied an included revision inside the spend cap.", { actor: "automatic" });
 }
 
 function classify(note: string, remaining: number): { classification: "included" | "scope_change"; affected: string; action: string } {
@@ -825,97 +859,99 @@ function classify(note: string, remaining: number): { classification: "included"
   };
 }
 
-export async function applyRevision(revisionId: string): Promise<void> {
-  ensureReady();
-  const all = listJobs().flatMap((job) => listRevisions(job.id).map((revision) => revision));
+export async function applyRevision(revisionId: string) {
+  await ensureReady();
+  const all = (await Promise.all((await listJobs()).map((job) => listRevisions(job.id)))).flat();
   const revision = all.find((item) => item.id === revisionId);
   if (!revision) throw new Error("Revision not found.");
   if (revision.classification !== "included") throw new Error("Scope changes stay blocked until a person writes a new price.");
   if (revision.approval === "approved") return;
-  const job = mustJob(revision.jobId);
-  const workflow = getWorkflow(job.id);
+  const job = await mustJob(revision.jobId);
+  const workflow = await getWorkflow(job.id);
   const step = workflow?.steps.find((item) => item.id === revision.affectedStepId) ?? workflow?.steps.find((item) => item.conditional);
   if (!step) throw new Error("No step to apply this revision to.");
   const family = getModel(step.modelId)?.family ?? "";
   const gate = repairAllowed({
     incrementalMicros: revision.expectedIncrementalMicros,
-    jobSpendMicros: jobSpendMicros(job.id),
+    jobSpendMicros: await jobSpendMicros(job.id),
     attempts: 1,
     family,
-    settings: getAutonomy(),
+    settings: await getAutonomy(),
     introducesRightsIssue: false,
   });
   if (!gate.ok) {
-    audit(job.id, "escalation", gate.reason, {});
+    await audit(job.id, "escalation", gate.reason, {});
     throw new Error(gate.reason);
   }
   const generation = await runStep(job, { ...step, attempts: 1, purpose: revision.clientNote, settings: { ...step.settings, qaScript: "" } }, null, null);
   revision.approval = "approved";
   revision.appliedGenerationId = generation.id;
-  updateRevision(revision);
-  audit(job.id, "approval", "Included revision applied inside the spend cap.", { revisionId });
+  await updateRevision(revision);
+  await audit(job.id, "approval", "Included revision applied inside the spend cap.", { revisionId });
 }
 
-export function resetDemo(jobId: string): void {
-  ensureReady();
+export async function resetDemo(jobId: string) {
+  await ensureReady();
   if (jobId !== "job_rain" && jobId !== "job_orchard") throw new Error("Only the two seeded demos can be reset.");
-  const job = mustJob(jobId);
-  clearJobWork(jobId);
-  updateJob(jobId, {
+  const job = await mustJob(jobId);
+  await clearJobWork(jobId);
+  await updateJob(jobId, {
     status: "new",
     recordingGate: "analysis",
     rawBrief: jobId === "job_rain" ? RAIN_BRIEF : ORCHARD_BRIEF,
     clientNotes: "Recording reset. Paused before analysis.",
   });
-  audit(jobId, "intake", "Recording reset to the seeded brief. Paused before analysis.", {});
+  await audit(jobId, "intake", "Recording reset to the seeded brief. Paused before analysis.", {});
   void job;
 }
 
-export async function advanceRecording(jobId: string): Promise<string> {
-  ensureReady();
-  const job = mustJob(jobId);
+export async function advanceRecording(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
   if (!job.recordingGate) throw new Error("Reset the demo to arm recording mode.");
   if (job.recordingGate === "analysis") {
     await analyzeJob(jobId);
-    updateJob(jobId, { recordingGate: "approval" });
+    await updateJob(jobId, { recordingGate: "approval" });
     return "Paused before approval.";
   }
   if (job.recordingGate === "approval") {
-    const analysis = latestAnalysis(jobId);
+    const analysis = await latestAnalysis(jobId);
     if (analysis?.analysis.missingAssets.length) {
       const edited: BriefAnalysis = {
         ...analysis.analysis,
         missingAssets: [],
         assumptions: [...analysis.analysis.assumptions, "Recording approval assumes the open question is answered for this pass."],
       };
-      persistRoute(getJob(jobId)!, edited, "human");
+      const current = await getJob(jobId);
+      if (!current) throw new Error("Job not found.");
+      await persistRoute(current, edited, "human");
     }
-    approveWorkflow(jobId);
-    updateJob(jobId, { recordingGate: "generation" });
+    await approveWorkflow(jobId);
+    await updateJob(jobId, { recordingGate: "generation" });
     return "Paused before generation.";
   }
   if (job.recordingGate === "generation") {
     await runApprovedSteps(jobId);
-    updateJob(jobId, { recordingGate: "qa", status: "qa" });
+    await updateJob(jobId, { recordingGate: "qa", status: "qa" });
     return "Paused before QA.";
   }
   if (job.recordingGate === "qa") {
     await runQa(jobId);
     if (jobId === "job_rain") {
-      addRevision(jobId, "Make the final reveal warmer and more hopeful.");
+      await addRevision(jobId, "Make the final reveal warmer and more hopeful.");
     }
-    updateJob(jobId, { recordingGate: "delivery", status: "qa" });
+    await updateJob(jobId, { recordingGate: "delivery", status: "qa" });
     return "Paused before delivery. The warmer reveal is waiting as an included revision.";
   }
-  draftDelivery(jobId);
+  await draftDelivery(jobId);
   return "Delivery package drafted. Final delivery still requires explicit approval.";
 }
 
-export function draftDelivery(jobId: string): void {
-  ensureReady();
-  const job = mustJob(jobId);
-  const decision = dispatchDecision({ kind: "delivery", channel: "first_party_portal", settings: getAutonomy() });
-  insertMessage({
+export async function draftDelivery(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
+  const decision = dispatchDecision({ kind: "delivery", channel: "first_party_portal", settings: await getAutonomy() });
+  await insertMessage({
     id: uid("msg"),
     jobId,
     kind: "delivery",
@@ -927,7 +963,7 @@ export function draftDelivery(jobId: string): void {
     reason: decision.reason,
     createdAt: now(),
   });
-  insertMessage({
+  await insertMessage({
     id: uid("msg"),
     jobId,
     kind: "feedback",
@@ -939,104 +975,104 @@ export function draftDelivery(jobId: string): void {
     reason: "Feedback requests stay drafted unless Autonomy Settings allows them.",
     createdAt: now(),
   });
-  audit(jobId, "message_draft", "Delivery note and feedback request drafted. Not sent.", {});
+  await audit(jobId, "message_draft", "Delivery note and feedback request drafted. Not sent.", {});
 }
 
-export function approveDelivery(jobId: string): void {
-  ensureReady();
-  const job = mustJob(jobId);
+export async function approveDelivery(jobId: string) {
+  await ensureReady();
+  const job = await mustJob(jobId);
   if (job.status === "rejected") throw new Error("Rejected jobs cannot be delivered.");
-  updateJob(jobId, { status: "delivered", recordingGate: null });
-  audit(jobId, "approval", "Human approved final delivery.", {});
+  await updateJob(jobId, { status: "delivered", recordingGate: null });
+  await audit(jobId, "approval", "Human approved final delivery.", {});
 }
 
-export function agentAttemptDelivery(jobId: string): { status: "blocked"; reason: string } {
-  ensureReady();
-  const job = mustJob(jobId);
-  const result = dispatchDecision({ kind: "delivery", channel: "first_party_portal", settings: getAutonomy() });
-  recordMessage(job, {
+export async function agentAttemptDelivery(jobId: string): Promise<{ status: "blocked"; reason: string }> {
+  await ensureReady();
+  const job = await mustJob(jobId);
+  const result = dispatchDecision({ kind: "delivery", channel: "first_party_portal", settings: await getAutonomy() });
+  await recordMessage(job, {
     kind: "escalation",
     subject: "Delivery was not sent",
     body: result.reason,
     audience: "human",
   });
-  audit(jobId, "escalation", result.reason, {});
+  await audit(jobId, "escalation", result.reason, {});
   return { status: "blocked", reason: result.reason };
 }
 
-export function saveSettings(settings: AutonomySettings): void {
-  ensureReady();
-  saveAutonomy(settings);
-  audit(null, "approval", "Autonomy Settings saved.", {});
+export async function saveSettings(settings: AutonomySettings) {
+  await ensureReady();
+  await saveAutonomy(settings);
+  await audit(null, "approval", "Autonomy Settings saved.", {});
 }
 
-export function readSettings(): AutonomySettings {
-  ensureReady();
-  return getAutonomy();
+export async function readSettings() {
+  await ensureReady();
+  return await getAutonomy();
 }
 
-export async function connectionEstimate(): Promise<{ usdMicros: number | null; note: string; mode: string }> {
-  ensureReady();
+export async function connectionEstimate() {
+  await ensureReady();
   const test = connectionTestInput();
   if (generationMode() === "mock") {
     const estimate = mockEstimate(test.endpoint, 1);
-    audit(null, "generation", "Connection test estimate in mock mode. Nothing was submitted.", {});
+    await audit(null, "generation", "Connection test estimate in mock mode. Nothing was submitted.", {});
     return { usdMicros: estimate.usdMicros, note: test.note, mode: "mock" };
   }
   const estimate = await estimateRequest(test.endpoint, test.input);
-  audit(null, "generation", "Live estimate for the Soul 2 connection test. No generation was submitted.", {});
+  await audit(null, "generation", "Live estimate for the Soul 2 connection test. No generation was submitted.", {});
   return { usdMicros: estimate.usdMicros, note: test.note, mode: "live" };
 }
 
-export async function connectionSubmit(): Promise<{ requestId: string; status: string }> {
-  ensureReady();
+export async function connectionSubmit() {
+  await ensureReady();
   const test = connectionTestInput();
   if (generationMode() === "mock") {
     const submitted = mockSubmit("connection");
-    audit(null, "generation", "Mock connection test completed locally.", {});
+    await audit(null, "generation", "Mock connection test completed locally.", {});
     return { requestId: submitted.requestId, status: "completed" };
   }
   await estimateRequest(test.endpoint, test.input);
   const submitted = await submitRequest(test.endpoint, test.input);
-  audit(null, "generation", "Connection test submitted after estimate.", { requestId: submitted.requestId });
+  await audit(null, "generation", "Connection test submitted after estimate.", { requestId: submitted.requestId });
   return { requestId: submitted.requestId, status: submitted.status };
 }
 
-export function globalAudit() {
-  ensureReady();
-  return listAudit();
+export async function globalAudit() {
+  await ensureReady();
+  return await listAudit();
 }
 
-export function updateClientMemory(clientId: string, memory: ClientMemory, name: string): void {
-  ensureReady();
-  const existing = getClient(clientId);
+export async function updateClientMemory(clientId: string, memory: ClientMemory, name: string) {
+  await ensureReady();
+  const existing = await getClient(clientId);
   if (!existing) throw new Error("Client not found.");
-  upsertClient({ ...existing, name, memory });
-  audit(null, "approval", `Client memory updated for ${name}. Likeness consent was not inferred from older work.`, {});
+  await upsertClient({ ...existing, name, memory });
+  await audit(null, "approval", `Client memory updated for ${name}. Likeness consent was not inferred from older work.`, {});
 }
 
-export async function applyWebhook(body: unknown): Promise<{ ok: boolean; reason: string }> {
+export async function applyWebhook(body: unknown) {
   if (!body || typeof body !== "object") return { ok: false, reason: "Invalid envelope." };
   const envelope = body as { request_id?: string; status?: string; error?: string | null; payload?: { images?: { url: string }[]; video?: { url: string } } | null };
   if (!envelope.request_id || !envelope.status) return { ok: false, reason: "Invalid envelope." };
-  const row = findGenerationByRequest(envelope.request_id);
+  const row = await findGenerationByRequest(envelope.request_id);
   if (!row) return { ok: true, reason: "Unknown request ignored." };
   if (row.providerStatus === envelope.status && isTerminal(row.providerStatus)) return { ok: true, reason: "Duplicate ignored." };
   if (row.statusUrl) await refreshGeneration(row.id);
   return { ok: true, reason: "Recorded." };
 }
 
-function recordMessage(
+async function recordMessage(
   job: JobRecord,
   input: { kind: MessageRecord["kind"]; subject: string; body: string; audience: MessageRecord["audience"] },
-): void {
+) {
   const channel: MessageRecord["channel"] = /upwork|fiverr|contra/i.test(job.source)
     ? "marketplace"
     : /email/i.test(job.source)
       ? "direct_email"
       : "first_party_portal";
-  const decision = dispatchDecision({ kind: input.kind, channel, settings: getAutonomy() });
-  insertMessage({
+  const decision = dispatchDecision({ kind: input.kind, channel, settings: await getAutonomy() });
+  await insertMessage({
     id: uid("msg"),
     jobId: job.id,
     kind: input.kind,
@@ -1048,7 +1084,7 @@ function recordMessage(
     reason: decision.reason,
     createdAt: now(),
   });
-  audit(job.id, "message_draft", `${input.kind} ${decision.status}. ${decision.reason}`, {});
+  await audit(job.id, "message_draft", `${input.kind} ${decision.status}. ${decision.reason}`, {});
 }
 
 function proposalBody(job: JobRecord, analysis: BriefAnalysis): string {
@@ -1075,17 +1111,17 @@ function deliveryNote(job: JobRecord): string {
   ].join("\n\n");
 }
 
-function mustJob(id: string): JobRecord {
-  const job = getJob(id);
+async function mustJob(id: string) {
+  const job = await getJob(id);
   if (!job) throw new Error("Job not found.");
   return job;
 }
 
-export function spendSnapshot(jobId: string): { spent: number; cap: number; repairCap: number } {
-  ensureReady();
-  const settings = getAutonomy();
+export async function spendSnapshot(jobId: string): Promise<{ spent: number; cap: number; repairCap: number }> {
+  await ensureReady();
+  const settings = await getAutonomy();
   return {
-    spent: jobSpendMicros(jobId),
+    spent: await jobSpendMicros(jobId),
     cap: settings.maxAutomaticSpendPerJobMicros,
     repairCap: settings.maxAutomaticSpendPerRepairMicros,
   };

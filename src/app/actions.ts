@@ -52,7 +52,7 @@ function fail(error: unknown): { ok: false; error: string } {
 export async function createJobAction(formData: FormData) {
   const price = parseDollarsToMicros(String(formData.get("price") || "0")) ?? 0;
   const deadline = String(formData.get("deadline") || "");
-  const job = createJob({
+  const job = await createJob({
     title: String(formData.get("title") || ""),
     source: String(formData.get("source") || "Direct form"),
     rawBrief: String(formData.get("brief") || ""),
@@ -82,14 +82,14 @@ export async function analyzeAction(jobId: string) {
 }
 
 export async function saveReviewAction(jobId: string, raw: unknown) {
-  const result = saveHumanAnalysis(jobId, raw);
+  const result = await saveHumanAnalysis(jobId, raw);
   refresh(jobId);
   return result;
 }
 
 export async function approveAction(jobId: string) {
   try {
-    approveWorkflow(jobId);
+    await approveWorkflow(jobId);
     refresh(jobId);
     return { ok: true as const };
   } catch (error) {
@@ -98,13 +98,13 @@ export async function approveAction(jobId: string) {
 }
 
 export async function rejectAction(jobId: string) {
-  rejectJob(jobId);
+  await rejectJob(jobId);
   refresh(jobId);
 }
 
 export async function overrideAction(jobId: string, stepId: string, modelId: string) {
   try {
-    overrideStep(jobId, stepId, modelId);
+    await overrideStep(jobId, stepId, modelId);
     refresh(jobId);
     return { ok: true as const };
   } catch (error) {
@@ -114,7 +114,7 @@ export async function overrideAction(jobId: string, stepId: string, modelId: str
 
 export async function commercialsAction(formData: FormData) {
   const jobId = String(formData.get("jobId"));
-  updateCommercials(jobId, {
+  await updateCommercials(jobId, {
     clientPriceMicros: parseDollarsToMicros(String(formData.get("price") || "0")) ?? 0,
     sourceFeeBps: Math.round(Number(formData.get("fee") || 0) * 100),
     contingencyBps: Math.round(Number(formData.get("contingency") || 0) * 100),
@@ -175,7 +175,7 @@ export async function retryAction(id: string, jobId: string) {
 }
 
 export async function revisionAction(jobId: string, note: string) {
-  const revision = addRevision(jobId, note);
+  const revision = await addRevision(jobId, note);
   await maybeAutoApplyRevision(revision.id);
   refresh(jobId);
 }
@@ -191,7 +191,7 @@ export async function applyRevisionAction(jobId: string, revisionId: string) {
 }
 
 export async function resetAction(jobId: string) {
-  resetDemo(jobId);
+  await resetDemo(jobId);
   refresh(jobId);
 }
 
@@ -206,13 +206,13 @@ export async function advanceAction(jobId: string) {
 }
 
 export async function deliveryDraftAction(jobId: string) {
-  draftDelivery(jobId);
+  await draftDelivery(jobId);
   refresh(jobId);
 }
 
 export async function deliverAction(jobId: string) {
   try {
-    const blocked = agentAttemptDelivery(jobId);
+    const blocked = await agentAttemptDelivery(jobId);
     if (blocked.status === "blocked") {
       refresh(jobId);
       return blocked;
@@ -225,7 +225,7 @@ export async function deliverAction(jobId: string) {
 
 export async function approveDeliveryAction(jobId: string) {
   try {
-    approveDelivery(jobId);
+    await approveDelivery(jobId);
     refresh(jobId);
     return { ok: true as const };
   } catch (error) {
@@ -234,12 +234,12 @@ export async function approveDeliveryAction(jobId: string) {
 }
 
 export async function settingsAction(settings: AutonomySettings) {
-  saveSettings(settings);
+  await saveSettings(settings);
   refresh();
 }
 
 export async function memoryAction(clientId: string, name: string, memory: ClientMemory, jobId: string) {
-  updateClientMemory(clientId, memory, name);
+  await updateClientMemory(clientId, memory, name);
   refresh(jobId);
 }
 

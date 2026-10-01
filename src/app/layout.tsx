@@ -3,10 +3,13 @@ import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
 import { ClipboardList, Library, Plug, Plus, ScrollText, SlidersHorizontal, LayoutTemplate, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
+import { hydrateProcessEnv } from "@/lib/cloudflare-env";
 import { analysisMode, generationMode } from "@/lib/mode";
 
 const sans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"] });
 const mono = IBM_Plex_Mono({ subsets: ["latin"], weight: ["400", "500"], variable: "--font-mono" });
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Agency Operator",
@@ -23,9 +26,11 @@ const links: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Audit", href: "/audit", icon: ScrollText },
 ];
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  await hydrateProcessEnv();
   const analysis = analysisMode();
   const generation = generationMode();
+  const mock = analysis === "mock" && generation === "mock";
   return (
     <html lang="en">
       <body className={`${sans.className} ${mono.variable}`}>
@@ -39,9 +44,13 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 Paste a brief. The studio runs it inside your limits. You approve delivery.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {mock ? <span className="kicker rounded-full border border-[var(--color-accent)] px-2 py-1 text-[var(--color-accent)]">Mock mode</span> : null}
               <span className="kicker rounded-full border px-2 py-1">Analysis {analysis}</span>
               <span className="kicker rounded-full border px-2 py-1">Generation {generation}</span>
+              <form action="/api/logout" method="post">
+                <button className="kicker rounded-full border px-2 py-1" type="submit">Log out</button>
+              </form>
             </div>
           </header>
           <nav className="mb-6 flex flex-wrap gap-2">

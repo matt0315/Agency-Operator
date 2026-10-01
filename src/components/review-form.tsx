@@ -21,7 +21,7 @@ export function ReviewForm({ jobId, initial }: { jobId: string; initial: BriefAn
         event.preventDefault();
         start(async () => {
           const result = await saveReviewAction(jobId, analysis);
-          setError(result.ok ? "Saved. The model version is still on the job." : result.error);
+          setError(result.ok ? "Saved. The model version is still on the job." : "error" in result ? result.error : "Could not save.");
         });
       }}
     >

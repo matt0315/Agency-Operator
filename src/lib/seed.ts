@@ -100,7 +100,7 @@ function client(id: string, name: string, channel: ClientRecord["channel"], memo
   return { id, name, channel, memory: { ...emptyMemory(), ...memory } };
 }
 
-export function seedDatabase(): void {
+export async function seedDatabase() {
   const rainClient = client("client_northline", "Northline Civic Atelier", "first_party_portal", {
     colors: ["storm gray", "wet stone", "smoked glass"],
     tone: "Quiet, monumental, physical. No hype.",
@@ -118,10 +118,10 @@ export function seedDatabase(): void {
     communicationPreferences: ["Email"],
   });
   const priya = client("client_priya", "Priya Raman", "direct_email", { tone: "Practical" });
-  upsertClient(rainClient);
-  upsertClient(orchardClient);
-  upsertClient(priya);
-  upsertClient(client("client_reject", "Unassigned", "marketplace", {}));
+  await upsertClient(rainClient);
+  await upsertClient(orchardClient);
+  await upsertClient(priya);
+  await upsertClient(client("client_reject", "Unassigned", "marketplace", {}));
 
   const rainJob: JobRecord = {
     id: "job_rain",
@@ -142,7 +142,7 @@ export function seedDatabase(): void {
     createdAt: stamp(86_400_000),
     updatedAt: stamp(3_600_000),
   };
-  insertJob(rainJob);
+  await insertJob(rainJob);
 
   const rainModel = rainAnalysis();
   const rainRoute = routeFromAnalysis(rainModel, rainJob.title);
@@ -156,7 +156,7 @@ export function seedDatabase(): void {
     maxProductionMicros: rainJob.maxProductionMicros,
     deadlineAt: rainJob.deadlineAt,
   });
-  insertAnalysis({
+  await insertAnalysis({
     id: "analysis_rain_model",
     jobId: rainJob.id,
     kind: "model",
@@ -183,7 +183,7 @@ export function seedDatabase(): void {
     maxProductionMicros: rainJob.maxProductionMicros,
     deadlineAt: rainJob.deadlineAt,
   });
-  insertAnalysis({
+  await insertAnalysis({
     id: "analysis_rain_human",
     jobId: rainJob.id,
     kind: "human",
@@ -192,7 +192,7 @@ export function seedDatabase(): void {
     createdAt: stamp(70_000_000),
   });
 
-  saveWorkflow({
+  await saveWorkflow({
     id: "wf_rain",
     jobId: rainJob.id,
     status: "approved",
@@ -216,7 +216,7 @@ export function seedDatabase(): void {
 
   for (const [index, gen] of gens.entries()) {
     const created = stamp(60_000_000 - index * 1_000_000);
-    insertGeneration({
+    await insertGeneration({
       id: gen.id,
       jobId: rainJob.id,
       stepId: gen.stepId,
@@ -239,7 +239,7 @@ export function seedDatabase(): void {
       updatedAt: created,
     });
     if (gen.actual > 0) {
-      insertLedger({
+      await insertLedger({
         id: `led_${gen.id}`,
         jobId: rainJob.id,
         generationId: gen.id,
@@ -250,7 +250,7 @@ export function seedDatabase(): void {
     }
   }
 
-  insertQa({
+  await insertQa({
     id: "qa_169",
     jobId: rainJob.id,
     generationId: "gen_169",
@@ -270,7 +270,7 @@ export function seedDatabase(): void {
     createdAt: stamp(18_000_000),
   });
 
-  insertRevision({
+  await insertRevision({
     id: "rev_warm",
     jobId: rainJob.id,
     clientNote: "Make the final reveal warmer and more hopeful.",
@@ -291,7 +291,7 @@ export function seedDatabase(): void {
     ["msg_delivery", "delivery", "draft", "Delivery is ready for your approval", "The 16:9 film, the 9:16 film, and three stills are in the package. A reflection repair is in the 16:9 cut. Final delivery has not been sent.", "Final delivery requires approval."],
   ] as const;
   for (const [index, message] of messages.entries()) {
-    insertMessage({
+    await insertMessage({
       id: message[0],
       jobId: rainJob.id,
       kind: message[1],
@@ -315,7 +315,7 @@ export function seedDatabase(): void {
     ["escalation", "Warmer reveal is an included revision and is waiting for a person to apply it."],
   ] as const;
   for (const [index, audit] of audits.entries()) {
-    insertAudit({
+    await insertAudit({
       id: `audit_rain_${index}`,
       jobId: rainJob.id,
       kind: audit[0],
@@ -346,8 +346,8 @@ export function seedDatabase(): void {
     createdAt: stamp(20_000_000),
     updatedAt: stamp(2_000_000),
   };
-  insertJob(orchardJob);
-  insertAnalysis({
+  await insertJob(orchardJob);
+  await insertAnalysis({
     id: "analysis_orchard",
     jobId: orchardJob.id,
     kind: "model",
@@ -364,7 +364,7 @@ export function seedDatabase(): void {
     }),
     createdAt: stamp(19_000_000),
   });
-  saveWorkflow({
+  await saveWorkflow({
     id: "wf_orchard",
     jobId: orchardJob.id,
     status: "draft",
@@ -373,7 +373,7 @@ export function seedDatabase(): void {
     createdAt: stamp(19_000_000),
     updatedAt: stamp(19_000_000),
   });
-  insertAudit({
+  await insertAudit({
     id: "audit_orchard",
     jobId: orchardJob.id,
     kind: "model_decision",
@@ -403,8 +403,8 @@ export function seedDatabase(): void {
     createdAt: stamp(10_000_000),
     updatedAt: stamp(9_000_000),
   };
-  insertJob(rejectJob);
-  insertAnalysis({
+  await insertJob(rejectJob);
+  await insertAnalysis({
     id: "analysis_reject",
     jobId: rejectJob.id,
     kind: "model",
@@ -422,7 +422,7 @@ export function seedDatabase(): void {
     createdAt: stamp(9_000_000),
   });
 
-  insertJob({
+  await insertJob({
     id: "job_new",
     title: "Email — seasonal stills inquiry",
     source: "Email",
@@ -443,5 +443,5 @@ export function seedDatabase(): void {
   });
 
   void getTemplate("launch-video");
-  setMeta("seed", "1");
+  await setMeta("seed", "1");
 }

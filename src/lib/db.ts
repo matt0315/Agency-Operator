@@ -1,7 +1,5 @@
-import { mkdirSync } from "node:fs";
-import path from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import { DEFAULT_AUTONOMY } from "./autonomy";
+import { getSql, resetSqlClient, type SqlRow } from "./sql";
 import type {
   AuditRecord,
   AutonomySettings,
@@ -19,144 +17,27 @@ import type {
   WorkflowRecord,
 } from "./types";
 
-let db: DatabaseSync | null = null;
-
-function databasePath(): string {
-  const configured = process.env.DATABASE_PATH || path.join(process.cwd(), "data", "agency-operator.sqlite");
-  if (configured === ":memory:") return ":memory:";
-  const abs = path.isAbsolute(configured) ? configured : path.join(process.cwd(), configured);
-  mkdirSync(path.dirname(abs), { recursive: true });
-  return abs;
+async function get(sql: string, params: unknown[] = []): Promise<SqlRow | null> {
+  return (await getSql()).get(sql, params);
 }
 
-export function getDb(): DatabaseSync {
-  if (db) return db;
-  db = new DatabaseSync(databasePath());
-  db.exec("PRAGMA journal_mode = WAL;");
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS jobs (
-      id TEXT PRIMARY KEY,
-      title TEXT NOT NULL,
-      source TEXT NOT NULL,
-      raw_brief TEXT NOT NULL,
-      client_price_micros INTEGER NOT NULL,
-      deadline_at TEXT NOT NULL,
-      status TEXT NOT NULL,
-      client_id TEXT NOT NULL,
-      client_notes TEXT NOT NULL,
-      template_id TEXT,
-      source_fee_bps INTEGER NOT NULL,
-      contingency_bps INTEGER NOT NULL,
-      target_margin_bps INTEGER NOT NULL,
-      max_production_micros INTEGER NOT NULL,
-      recording_gate TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS clients (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      channel TEXT NOT NULL,
-      memory_json TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS analyses (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      analysis_json TEXT NOT NULL,
-      decision_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS workflows (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      status TEXT NOT NULL,
-      steps_json TEXT NOT NULL,
-      approved_max_micros INTEGER,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS generations (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      step_id TEXT NOT NULL,
-      model_id TEXT NOT NULL,
-      provider TEXT NOT NULL,
-      request_id TEXT,
-      status_url TEXT,
-      cancel_url TEXT,
-      provider_status TEXT,
-      app_status TEXT NOT NULL,
-      estimate_micros INTEGER,
-      actual_micros INTEGER,
-      input_json TEXT NOT NULL,
-      output_json TEXT,
-      error TEXT,
-      retry_of TEXT,
-      created_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS qa_reports (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      generation_id TEXT,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS revisions (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS messages (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS audit_log (
-      id TEXT PRIMARY KEY,
-      job_id TEXT,
-      kind TEXT NOT NULL,
-      summary TEXT NOT NULL,
-      payload_json TEXT NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS ledger (
-      id TEXT PRIMARY KEY,
-      job_id TEXT NOT NULL,
-      generation_id TEXT,
-      label TEXT NOT NULL,
-      amount_micros INTEGER NOT NULL,
-      created_at TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS settings (
-      key TEXT PRIMARY KEY,
-      value_json TEXT NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS meta (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-  const existing = db.prepare("SELECT value_json FROM settings WHERE key = ?").get("autonomy") as { value_json: string } | undefined;
-  if (!existing) {
-    db.prepare("INSERT INTO settings (key, value_json) VALUES (?, ?)").run("autonomy", JSON.stringify(DEFAULT_AUTONOMY));
-  }
-  return db;
+async function all(sql: string, params: unknown[] = []): Promise<SqlRow[]> {
+  return (await getSql()).all(sql, params);
 }
 
-export function closeDb(): void {
-  db?.close();
-  db = null;
+async function run(sql: string, params: unknown[] = []): Promise<void> {
+  await (await getSql()).run(sql, params);
+}
+
+export async function closeDb(): Promise<void> {
+  await resetSqlClient();
 }
 
 function parse<T>(value: string): T {
   return JSON.parse(value) as T;
 }
 
-function mapJob(row: Record<string, unknown>): JobRecord {
+function mapJob(row: SqlRow): JobRecord {
   return {
     id: String(row.id),
     title: String(row.title),
@@ -178,88 +59,57 @@ function mapJob(row: Record<string, unknown>): JobRecord {
   };
 }
 
-export function listJobs(): JobRecord[] {
-  const rows = getDb().prepare("SELECT * FROM jobs ORDER BY created_at DESC").all() as Record<string, unknown>[];
-  return rows.map(mapJob);
+export async function listJobs(): Promise<JobRecord[]> {
+  return (await all("SELECT * FROM jobs ORDER BY created_at DESC")).map(mapJob);
 }
 
-export function getJob(id: string): JobRecord | null {
-  const row = getDb().prepare("SELECT * FROM jobs WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+export async function getJob(id: string): Promise<JobRecord | null> {
+  const row = await get("SELECT * FROM jobs WHERE id = ?", [id]);
   return row ? mapJob(row) : null;
 }
 
-export function insertJob(job: JobRecord): void {
-  getDb()
-    .prepare(
-      `INSERT INTO jobs (
-        id, title, source, raw_brief, client_price_micros, deadline_at, status, client_id, client_notes,
-        template_id, source_fee_bps, contingency_bps, target_margin_bps, max_production_micros, recording_gate,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      job.id,
-      job.title,
-      job.source,
-      job.rawBrief,
-      job.clientPriceMicros,
-      job.deadlineAt,
-      job.status,
-      job.clientId,
-      job.clientNotes,
-      job.templateId,
-      job.sourceFeeBps,
-      job.contingencyBps,
-      job.targetMarginBps,
-      job.maxProductionMicros,
-      job.recordingGate,
-      job.createdAt,
-      job.updatedAt,
-    );
+export async function insertJob(job: JobRecord): Promise<void> {
+  await run(
+    `INSERT INTO jobs (
+      id, title, source, raw_brief, client_price_micros, deadline_at, status, client_id, client_notes,
+      template_id, source_fee_bps, contingency_bps, target_margin_bps, max_production_micros, recording_gate,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      job.id, job.title, job.source, job.rawBrief, job.clientPriceMicros, job.deadlineAt, job.status, job.clientId,
+      job.clientNotes, job.templateId, job.sourceFeeBps, job.contingencyBps, job.targetMarginBps, job.maxProductionMicros,
+      job.recordingGate, job.createdAt, job.updatedAt,
+    ],
+  );
 }
 
-export function updateJob(id: string, patch: Partial<JobRecord>): JobRecord {
-  const current = getJob(id);
+export async function updateJob(id: string, patch: Partial<JobRecord>): Promise<JobRecord> {
+  const current = await getJob(id);
   if (!current) throw new Error("Job not found.");
   const next = { ...current, ...patch, updatedAt: new Date().toISOString() };
-  getDb()
-    .prepare(
-      `UPDATE jobs SET title=?, source=?, raw_brief=?, client_price_micros=?, deadline_at=?, status=?, client_id=?,
-        client_notes=?, template_id=?, source_fee_bps=?, contingency_bps=?, target_margin_bps=?, max_production_micros=?,
-        recording_gate=?, updated_at=? WHERE id=?`,
-    )
-    .run(
-      next.title,
-      next.source,
-      next.rawBrief,
-      next.clientPriceMicros,
-      next.deadlineAt,
-      next.status,
-      next.clientId,
-      next.clientNotes,
-      next.templateId,
-      next.sourceFeeBps,
-      next.contingencyBps,
-      next.targetMarginBps,
-      next.maxProductionMicros,
-      next.recordingGate,
-      next.updatedAt,
-      id,
-    );
+  await run(
+    `UPDATE jobs SET title=?, source=?, raw_brief=?, client_price_micros=?, deadline_at=?, status=?, client_id=?,
+      client_notes=?, template_id=?, source_fee_bps=?, contingency_bps=?, target_margin_bps=?, max_production_micros=?,
+      recording_gate=?, updated_at=? WHERE id=?`,
+    [
+      next.title, next.source, next.rawBrief, next.clientPriceMicros, next.deadlineAt, next.status, next.clientId,
+      next.clientNotes, next.templateId, next.sourceFeeBps, next.contingencyBps, next.targetMarginBps,
+      next.maxProductionMicros, next.recordingGate, next.updatedAt, id,
+    ],
+  );
   return next;
 }
 
-export function upsertClient(client: ClientRecord): void {
-  getDb()
-    .prepare(
-      `INSERT INTO clients (id, name, channel, memory_json) VALUES (?, ?, ?, ?)
-       ON CONFLICT(id) DO UPDATE SET name=excluded.name, channel=excluded.channel, memory_json=excluded.memory_json`,
-    )
-    .run(client.id, client.name, client.channel, JSON.stringify(client.memory));
+export async function upsertClient(client: ClientRecord): Promise<void> {
+  await run(
+    `INSERT INTO clients (id, name, channel, memory_json) VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET name=excluded.name, channel=excluded.channel, memory_json=excluded.memory_json`,
+    [client.id, client.name, client.channel, JSON.stringify(client.memory)],
+  );
 }
 
-export function getClient(id: string): ClientRecord | null {
-  const row = getDb().prepare("SELECT * FROM clients WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+export async function getClient(id: string): Promise<ClientRecord | null> {
+  const row = await get("SELECT * FROM clients WHERE id = ?", [id]);
   if (!row) return null;
   return {
     id: String(row.id),
@@ -269,8 +119,8 @@ export function getClient(id: string): ClientRecord | null {
   };
 }
 
-export function listAnalyses(jobId: string): StoredAnalysis[] {
-  const rows = getDb().prepare("SELECT * FROM analyses WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
+export async function listAnalyses(jobId: string): Promise<StoredAnalysis[]> {
+  const rows = await all("SELECT * FROM analyses WHERE job_id = ? ORDER BY created_at ASC", [jobId]);
   return rows.map((row) => ({
     id: String(row.id),
     jobId: String(row.job_id),
@@ -281,16 +131,14 @@ export function listAnalyses(jobId: string): StoredAnalysis[] {
   }));
 }
 
-export function insertAnalysis(row: StoredAnalysis): void {
-  getDb()
-    .prepare("INSERT INTO analyses (id, job_id, kind, analysis_json, decision_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(row.id, row.jobId, row.kind, JSON.stringify(row.analysis), JSON.stringify(row.decision), row.createdAt);
+export async function insertAnalysis(row: StoredAnalysis): Promise<void> {
+  await run("INSERT INTO analyses (id, job_id, kind, analysis_json, decision_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
+    row.id, row.jobId, row.kind, JSON.stringify(row.analysis), JSON.stringify(row.decision), row.createdAt,
+  ]);
 }
 
-export function getWorkflow(jobId: string): WorkflowRecord | null {
-  const row = getDb().prepare("SELECT * FROM workflows WHERE job_id = ? ORDER BY created_at DESC LIMIT 1").get(jobId) as
-    | Record<string, unknown>
-    | undefined;
+export async function getWorkflow(jobId: string): Promise<WorkflowRecord | null> {
+  const row = await get("SELECT * FROM workflows WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", [jobId]);
   if (!row) return null;
   return {
     id: String(row.id),
@@ -303,40 +151,21 @@ export function getWorkflow(jobId: string): WorkflowRecord | null {
   };
 }
 
-export function saveWorkflow(workflow: WorkflowRecord): void {
-  const existing = getWorkflow(workflow.jobId);
+export async function saveWorkflow(workflow: WorkflowRecord): Promise<void> {
+  const existing = await getWorkflow(workflow.jobId);
   if (!existing) {
-    getDb()
-      .prepare(
-        "INSERT INTO workflows (id, job_id, status, steps_json, approved_max_micros, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      )
-      .run(
-        workflow.id,
-        workflow.jobId,
-        workflow.status,
-        JSON.stringify(workflow.steps),
-        workflow.approvedMaxMicros,
-        workflow.createdAt,
-        workflow.updatedAt,
-      );
+    await run(
+      "INSERT INTO workflows (id, job_id, status, steps_json, approved_max_micros, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [workflow.id, workflow.jobId, workflow.status, JSON.stringify(workflow.steps), workflow.approvedMaxMicros, workflow.createdAt, workflow.updatedAt],
+    );
     return;
   }
-  getDb()
-    .prepare("UPDATE workflows SET status=?, steps_json=?, approved_max_micros=?, updated_at=? WHERE id=?")
-    .run(workflow.status, JSON.stringify(workflow.steps), workflow.approvedMaxMicros, workflow.updatedAt, existing.id);
+  await run("UPDATE workflows SET status=?, steps_json=?, approved_max_micros=?, updated_at=? WHERE id=?", [
+    workflow.status, JSON.stringify(workflow.steps), workflow.approvedMaxMicros, workflow.updatedAt, existing.id,
+  ]);
 }
 
-export function listGenerations(jobId: string): GenerationRecord[] {
-  const rows = getDb().prepare("SELECT * FROM generations WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
-  return rows.map(mapGeneration);
-}
-
-export function getGeneration(id: string): GenerationRecord | null {
-  const row = getDb().prepare("SELECT * FROM generations WHERE id = ?").get(id) as Record<string, unknown> | undefined;
-  return row ? mapGeneration(row) : null;
-}
-
-function mapGeneration(row: Record<string, unknown>): GenerationRecord {
+function mapGeneration(row: SqlRow): GenerationRecord {
   return {
     id: String(row.id),
     jobId: String(row.job_id),
@@ -359,108 +188,102 @@ function mapGeneration(row: Record<string, unknown>): GenerationRecord {
   };
 }
 
-export function insertGeneration(row: GenerationRecord): void {
-  getDb()
-    .prepare(
-      `INSERT INTO generations (
-        id, job_id, step_id, model_id, provider, request_id, status_url, cancel_url, provider_status, app_status,
-        estimate_micros, actual_micros, input_json, output_json, error, retry_of, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    )
-    .run(
-      row.id,
-      row.jobId,
-      row.stepId,
-      row.modelId,
-      row.provider,
-      row.requestId,
-      row.statusUrl,
-      row.cancelUrl,
-      row.providerStatus,
-      row.appStatus,
-      row.estimateMicros,
-      row.actualMicros,
-      JSON.stringify(row.input),
-      row.output ? JSON.stringify(row.output) : null,
-      row.error,
-      row.retryOf,
-      row.createdAt,
-      row.updatedAt,
-    );
+export async function listGenerations(jobId: string): Promise<GenerationRecord[]> {
+  return (await all("SELECT * FROM generations WHERE job_id = ? ORDER BY created_at ASC", [jobId])).map(mapGeneration);
 }
 
-export function updateGeneration(row: GenerationRecord): void {
-  getDb()
-    .prepare(
-      `UPDATE generations SET provider_status=?, app_status=?, estimate_micros=?, actual_micros=?, output_json=?, error=?, status_url=?, cancel_url=?, request_id=?, updated_at=? WHERE id=?`,
-    )
-    .run(
-      row.providerStatus,
-      row.appStatus,
-      row.estimateMicros,
-      row.actualMicros,
-      row.output ? JSON.stringify(row.output) : null,
-      row.error,
-      row.statusUrl,
-      row.cancelUrl,
-      row.requestId,
-      new Date().toISOString(),
-      row.id,
-    );
-}
-
-export function findGenerationByRequest(requestId: string): GenerationRecord | null {
-  const row = getDb().prepare("SELECT * FROM generations WHERE request_id = ?").get(requestId) as Record<string, unknown> | undefined;
+export async function getGeneration(id: string): Promise<GenerationRecord | null> {
+  const row = await get("SELECT * FROM generations WHERE id = ?", [id]);
   return row ? mapGeneration(row) : null;
 }
 
-export function listQa(jobId: string): QaReport[] {
-  const rows = getDb().prepare("SELECT * FROM qa_reports WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
+export async function insertGeneration(row: GenerationRecord): Promise<void> {
+  await run(
+    `INSERT INTO generations (
+      id, job_id, step_id, model_id, provider, request_id, status_url, cancel_url, provider_status, app_status,
+      estimate_micros, actual_micros, input_json, output_json, error, retry_of, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      row.id, row.jobId, row.stepId, row.modelId, row.provider, row.requestId, row.statusUrl, row.cancelUrl,
+      row.providerStatus, row.appStatus, row.estimateMicros, row.actualMicros, JSON.stringify(row.input),
+      row.output ? JSON.stringify(row.output) : null, row.error, row.retryOf, row.createdAt, row.updatedAt,
+    ],
+  );
+}
+
+export async function updateGeneration(row: GenerationRecord): Promise<void> {
+  await run(
+    `UPDATE generations SET provider_status=?, app_status=?, estimate_micros=?, actual_micros=?, output_json=?, error=?, status_url=?, cancel_url=?, request_id=?, updated_at=? WHERE id=?`,
+    [
+      row.providerStatus, row.appStatus, row.estimateMicros, row.actualMicros, row.output ? JSON.stringify(row.output) : null,
+      row.error, row.statusUrl, row.cancelUrl, row.requestId, new Date().toISOString(), row.id,
+    ],
+  );
+}
+
+export async function findGenerationByRequest(requestId: string): Promise<GenerationRecord | null> {
+  const row = await get("SELECT * FROM generations WHERE request_id = ?", [requestId]);
+  return row ? mapGeneration(row) : null;
+}
+
+export async function listQa(jobId: string): Promise<QaReport[]> {
+  const rows = await all("SELECT * FROM qa_reports WHERE job_id = ? ORDER BY created_at ASC", [jobId]);
   return rows.map((row) => {
     const payload = parse<Omit<QaReport, "id" | "jobId" | "createdAt">>(String(row.payload_json));
     return { ...payload, id: String(row.id), jobId: String(row.job_id), createdAt: String(row.created_at) };
   });
 }
 
-export function insertQa(row: QaReport): void {
+export async function insertQa(row: QaReport): Promise<void> {
   const { id, jobId, createdAt, ...payload } = row;
-  getDb()
-    .prepare("INSERT INTO qa_reports (id, job_id, generation_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)")
-    .run(id, jobId, row.generationId, JSON.stringify(payload), createdAt);
+  await run("INSERT INTO qa_reports (id, job_id, generation_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?)", [
+    id, jobId, row.generationId, JSON.stringify(payload), createdAt,
+  ]);
 }
 
-export function listRevisions(jobId: string): RevisionRecord[] {
-  const rows = getDb().prepare("SELECT * FROM revisions WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
-  return rows.map((row) => ({ id: String(row.id), jobId: String(row.job_id), ...parse<Omit<RevisionRecord, "id" | "jobId">>(String(row.payload_json)), createdAt: String(row.created_at) }));
+export async function listRevisions(jobId: string): Promise<RevisionRecord[]> {
+  const rows = await all("SELECT * FROM revisions WHERE job_id = ? ORDER BY created_at ASC", [jobId]);
+  return rows.map((row) => ({
+    id: String(row.id),
+    jobId: String(row.job_id),
+    ...parse<Omit<RevisionRecord, "id" | "jobId">>(String(row.payload_json)),
+    createdAt: String(row.created_at),
+  }));
 }
 
-export function insertRevision(row: RevisionRecord): void {
+export async function insertRevision(row: RevisionRecord): Promise<void> {
   const { id, jobId, createdAt, ...payload } = row;
-  getDb().prepare("INSERT INTO revisions (id, job_id, payload_json, created_at) VALUES (?, ?, ?, ?)").run(id, jobId, JSON.stringify({ ...payload, createdAt }), createdAt);
+  await run("INSERT INTO revisions (id, job_id, payload_json, created_at) VALUES (?, ?, ?, ?)", [
+    id, jobId, JSON.stringify({ ...payload, createdAt }), createdAt,
+  ]);
 }
 
-export function updateRevision(row: RevisionRecord): void {
-  const { id, createdAt, jobId, ...payload } = row;
-  getDb().prepare("UPDATE revisions SET payload_json = ? WHERE id = ?").run(JSON.stringify({ ...payload, createdAt }), id);
-  void jobId;
+export async function updateRevision(row: RevisionRecord): Promise<void> {
+  const { id, createdAt, ...payload } = row;
+  await run("UPDATE revisions SET payload_json = ? WHERE id = ?", [JSON.stringify({ ...payload, createdAt }), id]);
 }
 
-export function listMessages(jobId: string): MessageRecord[] {
-  const rows = getDb().prepare("SELECT * FROM messages WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
-  return rows.map((row) => ({ id: String(row.id), jobId: String(row.job_id), ...parse<Omit<MessageRecord, "id" | "jobId">>(String(row.payload_json)), createdAt: String(row.created_at) }));
+export async function listMessages(jobId: string): Promise<MessageRecord[]> {
+  const rows = await all("SELECT * FROM messages WHERE job_id = ? ORDER BY created_at ASC", [jobId]);
+  return rows.map((row) => ({
+    id: String(row.id),
+    jobId: String(row.job_id),
+    ...parse<Omit<MessageRecord, "id" | "jobId">>(String(row.payload_json)),
+    createdAt: String(row.created_at),
+  }));
 }
 
-export function insertMessage(row: MessageRecord): void {
+export async function insertMessage(row: MessageRecord): Promise<void> {
   const { id, jobId, createdAt, ...payload } = row;
-  getDb().prepare("INSERT INTO messages (id, job_id, payload_json, created_at) VALUES (?, ?, ?, ?)").run(id, jobId, JSON.stringify({ ...payload, createdAt }), createdAt);
+  await run("INSERT INTO messages (id, job_id, payload_json, created_at) VALUES (?, ?, ?, ?)", [
+    id, jobId, JSON.stringify({ ...payload, createdAt }), createdAt,
+  ]);
 }
 
-export function listAudit(jobId?: string): AuditRecord[] {
-  const rows = (
-    jobId
-      ? getDb().prepare("SELECT * FROM audit_log WHERE job_id = ? ORDER BY created_at ASC").all(jobId)
-      : getDb().prepare("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 200").all()
-  ) as Record<string, unknown>[];
+export async function listAudit(jobId?: string): Promise<AuditRecord[]> {
+  const rows = jobId
+    ? await all("SELECT * FROM audit_log WHERE job_id = ? ORDER BY created_at ASC", [jobId])
+    : await all("SELECT * FROM audit_log ORDER BY created_at DESC LIMIT 200");
   return rows.map((row) => ({
     id: String(row.id),
     jobId: row.job_id ? String(row.job_id) : null,
@@ -471,14 +294,14 @@ export function listAudit(jobId?: string): AuditRecord[] {
   }));
 }
 
-export function insertAudit(row: AuditRecord): void {
-  getDb()
-    .prepare("INSERT INTO audit_log (id, job_id, kind, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(row.id, row.jobId, row.kind, row.summary, JSON.stringify(row.payload), row.createdAt);
+export async function insertAudit(row: AuditRecord): Promise<void> {
+  await run("INSERT INTO audit_log (id, job_id, kind, summary, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
+    row.id, row.jobId, row.kind, row.summary, JSON.stringify(row.payload), row.createdAt,
+  ]);
 }
 
-export function listLedger(jobId: string): LedgerEntry[] {
-  const rows = getDb().prepare("SELECT * FROM ledger WHERE job_id = ? ORDER BY created_at ASC").all(jobId) as Record<string, unknown>[];
+export async function listLedger(jobId: string): Promise<LedgerEntry[]> {
+  const rows = await all("SELECT * FROM ledger WHERE job_id = ? ORDER BY created_at ASC", [jobId]);
   return rows.map((row) => ({
     id: String(row.id),
     jobId: String(row.job_id),
@@ -489,44 +312,63 @@ export function listLedger(jobId: string): LedgerEntry[] {
   }));
 }
 
-export function insertLedger(row: LedgerEntry): void {
-  getDb()
-    .prepare("INSERT INTO ledger (id, job_id, generation_id, label, amount_micros, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-    .run(row.id, row.jobId, row.generationId, row.label, row.amountMicros, row.createdAt);
+export async function insertLedger(row: LedgerEntry): Promise<void> {
+  await run("INSERT INTO ledger (id, job_id, generation_id, label, amount_micros, created_at) VALUES (?, ?, ?, ?, ?, ?)", [
+    row.id, row.jobId, row.generationId, row.label, row.amountMicros, row.createdAt,
+  ]);
 }
 
-export function jobSpendMicros(jobId: string): number {
-  const row = getDb().prepare("SELECT COALESCE(SUM(amount_micros), 0) AS total FROM ledger WHERE job_id = ?").get(jobId) as { total: number };
-  return Number(row.total);
+export async function jobSpendMicros(jobId: string): Promise<number> {
+  const row = await get("SELECT COALESCE(SUM(amount_micros), 0) AS total FROM ledger WHERE job_id = ?", [jobId]);
+  return Number(row?.total ?? 0);
 }
 
-export function getAutonomy(): AutonomySettings {
-  const row = getDb().prepare("SELECT value_json FROM settings WHERE key = ?").get("autonomy") as { value_json: string };
-  return { ...DEFAULT_AUTONOMY, ...parse<AutonomySettings>(row.value_json) };
-}
-
-export function saveAutonomy(settings: AutonomySettings): void {
-  getDb().prepare("UPDATE settings SET value_json = ? WHERE key = ?").run(JSON.stringify(settings), "autonomy");
-}
-
-export function clearJobWork(jobId: string): void {
-  const database = getDb();
-  for (const table of ["analyses", "workflows", "generations", "qa_reports", "revisions", "messages", "ledger"]) {
-    database.prepare(`DELETE FROM ${table} WHERE job_id = ?`).run(jobId);
+export async function getAutonomy(): Promise<AutonomySettings> {
+  const row = await get("SELECT value_json FROM settings WHERE key = ?", ["autonomy"]);
+  if (!row) {
+    await run("INSERT INTO settings (key, value_json) VALUES (?, ?)", ["autonomy", JSON.stringify(DEFAULT_AUTONOMY)]);
+    return { ...DEFAULT_AUTONOMY };
   }
-  database.prepare("DELETE FROM audit_log WHERE job_id = ?").run(jobId);
+  return { ...DEFAULT_AUTONOMY, ...parse<AutonomySettings>(String(row.value_json)) };
 }
 
-export function countJobs(): number {
-  const row = getDb().prepare("SELECT COUNT(*) AS count FROM jobs").get() as { count: number };
-  return Number(row.count);
+export async function saveAutonomy(settings: AutonomySettings): Promise<void> {
+  await run(
+    "INSERT INTO settings (key, value_json) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value_json = excluded.value_json",
+    ["autonomy", JSON.stringify(settings)],
+  );
 }
 
-export function getMeta(key: string): string | null {
-  const row = getDb().prepare("SELECT value FROM meta WHERE key = ?").get(key) as { value: string } | undefined;
-  return row?.value ?? null;
+export async function clearJobWork(jobId: string): Promise<void> {
+  for (const table of ["analyses", "workflows", "generations", "qa_reports", "revisions", "messages", "ledger"]) {
+    await run(`DELETE FROM ${table} WHERE job_id = ?`, [jobId]);
+  }
+  await run("DELETE FROM audit_log WHERE job_id = ?", [jobId]);
 }
 
-export function setMeta(key: string, value: string): void {
-  getDb().prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(key, value);
+export async function countJobs(): Promise<number> {
+  const row = await get("SELECT COUNT(*) AS count FROM jobs");
+  return Number(row?.count ?? 0);
+}
+
+export async function getMeta(key: string): Promise<string | null> {
+  const row = await get("SELECT value FROM meta WHERE key = ?", [key]);
+  return row ? String(row.value) : null;
+}
+
+export async function setMeta(key: string, value: string): Promise<void> {
+  await run("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value]);
+}
+
+export async function countRecentLoginFailures(ip: string, sinceIso: string): Promise<number> {
+  const row = await get("SELECT COUNT(*) AS count FROM login_attempts WHERE ip = ? AND created_at >= ?", [ip, sinceIso]);
+  return Number(row?.count ?? 0);
+}
+
+export async function recordLoginFailure(ip: string, atIso: string): Promise<void> {
+  await run("INSERT INTO login_attempts (ip, created_at) VALUES (?, ?)", [ip, atIso]);
+}
+
+export async function clearLoginFailures(ip: string): Promise<void> {
+  await run("DELETE FROM login_attempts WHERE ip = ?", [ip]);
 }

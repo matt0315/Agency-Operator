@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ReviewPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const bundle = getBundle(id);
+  const bundle = await getBundle(id);
   if (!bundle) notFound();
   const current = bundle.analyses.filter((row) => row.kind === "human").at(-1) ?? bundle.analyses.at(-1);
   return (

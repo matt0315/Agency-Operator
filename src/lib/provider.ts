@@ -1,6 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import path from "node:path";
 import { getModel } from "./catalog";
+import { importNodeModule } from "./node-import";
+import { isCloudflareWorker } from "./cloudflare-env";
+import { saveAssetBytes } from "./storage";
 import { redact } from "./mode";
 import type { NormalizedAsset, ProviderStatus } from "./types";
 
@@ -140,24 +141,26 @@ function asset(kind: NormalizedAsset["kind"], url: string, contentType: string):
 }
 
 export async function persistAssets(jobId: string, generationId: string, assets: NormalizedAsset[]): Promise<NormalizedAsset[]> {
-  const root = process.env.ASSET_DIR || path.join(process.cwd(), "data", "assets");
-  const dir = path.join(root, jobId);
-  mkdirSync(dir, { recursive: true });
   const saved: NormalizedAsset[] = [];
   for (let i = 0; i < assets.length; i += 1) {
     const item = assets[i];
     if (!item) continue;
     if (item.sourceUrl.startsWith("/")) {
-      const fileName = `${generationId}-${i}${path.extname(item.sourceUrl) || ".svg"}`;
-      const localPath = path.join(dir, fileName);
-      const source = path.join(process.cwd(), "public", item.sourceUrl);
-      try {
-        const { readFileSync } = await import("node:fs");
-        writeFileSync(localPath, readFileSync(source));
-      } catch {
-        writeFileSync(localPath, item.sourceUrl);
+      if (isCloudflareWorker()) {
+        saved.push(item);
+        continue;
       }
-      saved.push({ ...item, localPath, fileName });
+      try {
+        const { readFile } = await importNodeModule<typeof import("node:fs/promises")>(["node", "fs/promises"].join(":"));
+        const path = await importNodeModule<typeof import("node:path")>(["node", "path"].join(":"));
+        const source = path.join(process.cwd(), "public", item.sourceUrl);
+        const bytes = new Uint8Array(await readFile(source));
+        const fileName = `${generationId}-${i}${path.extname(item.sourceUrl) || ".svg"}`;
+        const localPath = await saveAssetBytes(`${jobId}/${fileName}`, bytes, item.contentType || "image/svg+xml");
+        saved.push({ ...item, localPath, fileName });
+      } catch {
+        saved.push(item);
+      }
       continue;
     }
     const response = await fetch(item.sourceUrl);
@@ -165,12 +168,11 @@ export async function persistAssets(jobId: string, generationId: string, assets:
       saved.push(item);
       continue;
     }
-    const bytes = Buffer.from(await response.arrayBuffer());
+    const bytes = new Uint8Array(await response.arrayBuffer());
     const ext = item.kind === "video" ? "mp4" : item.kind === "audio" ? "mp3" : "jpg";
     const fileName = `${generationId}-${i}.${ext}`;
-    const localPath = path.join(dir, fileName);
-    writeFileSync(localPath, bytes);
-    saved.push({ ...item, localPath, fileName });
+    const localPath = await saveAssetBytes(`${jobId}/${fileName}`, bytes, item.contentType || "application/octet-stream");
+    saved.push({ ...item, localPath, fileName, sourceUrl: `/api/assets/${generationId}?i=${i}` });
   }
   return saved;
 }

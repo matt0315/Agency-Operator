@@ -4,6 +4,9 @@ out
 dist
 .env
 .env.local
+.dev.vars
+.open-next
+.wrangler
 data/*.sqlite
 data/*.sqlite-*
 data/assets

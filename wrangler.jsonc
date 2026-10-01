@@ -1,0 +1,36 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agency-operator",
+  "account_id": "debc7f564c81cf2277cab7fe58d9d027",
+  "main": ".open-next/worker.js",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat", "nodejs_compat_populate_process_env", "global_fetch_strictly_public"],
+  "workers_dev": false,
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      "service": "agency-operator"
+    }
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "agency-operator",
+      "database_id": "a2fba81d-a3f2-465d-a4ed-c8621e39168f"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "agency-operator-assets"
+    }
+  ],
+  "routes": [
+    { "pattern": "aiautomators.com.au", "custom_domain": true },
+    { "pattern": "www.aiautomators.com.au", "custom_domain": true }
+  ]
+}
