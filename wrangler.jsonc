@@ -16,11 +16,13 @@
       "service": "agency-operator"
     }
   ],
+  // Holding-page emails use this existing D1 binding (table launch_signups).
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "agency-operator",
-      "database_id": "a2fba81d-a3f2-465d-a4ed-c8621e39168f"
+      "database_id": "a2fba81d-a3f2-465d-a4ed-c8621e39168f",
+      "migrations_dir": "migrations"
     }
   ],
   "r2_buckets": [

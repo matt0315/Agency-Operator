@@ -96,6 +96,7 @@ Two extra fixtures fill the board: a rejected celebrity-voice request, and an un
 - `src/lib/qa.ts` — checklist and repair recommendation
 - `src/lib/autonomy.ts` — spend caps, message policy, pause conditions
 - `src/lib/db.ts` — async repository. `npm run dev` uses a local `node:sqlite` file. Cloudflare Workers use the D1 binding `DB`.
+- `src/lib/launch-signup.ts` — public holding-page emails, stored in the same D1 database.
 - `src/lib/templates.ts` — Launch Video, UGC Ad Pack, Localization Pack
 
 Secrets and the sqlite file stay out of git. See `.env.example`.
@@ -110,19 +111,29 @@ The token that can deploy cannot run D1 commands. Apply the SQL files yourself, 
 
 1. `migrations/0001_init.sql` — tables
 2. `migrations/0002_seed.sql` — both demos, the reject and unanalyzed fixtures, service templates, and autonomy defaults
+3. `migrations/0003_launch_signups.sql` — holding-page emails. The signup handler also creates this table, so the public form works before the file is applied. Applying it does not delete captured rows.
 
-Both files are idempotent. Run them before the first login. The Worker does not migrate D1 on boot.
+The files are idempotent. Run the first two before the first login. The Worker does not migrate D1 on boot, except that a holding-page signup creates its own tables if they are missing.
 
 If a token later gains D1 access, the same files can be applied with:
 
 ```bash
 npx wrangler d1 execute agency-operator --remote --file=migrations/0001_init.sql
 npx wrangler d1 execute agency-operator --remote --file=migrations/0002_seed.sql
+npx wrangler d1 execute agency-operator --remote --file=migrations/0003_launch_signups.sql
 ```
 
-The current deploy token cannot run those two commands. Execute the SQL files directly.
+The current deploy token cannot run those commands. Execute the SQL files directly. `0003` is optional because the first signup creates the same tables.
 
-Set secrets from the repo root. Wrangler prompts for each value and does not print it back. The site returns 503 until both required secrets exist, including when `APP_MODE=mock`.
+Set secrets from the repo root. Wrangler prompts for each value and does not print it back. Until both required secrets exist, including when `APP_MODE=mock`, the public site serves a holding page instead of the operator app. Visitors can leave an email. Signups are stored in D1 table `launch_signups` on database `agency-operator` (binding `DB`). Repeats of the same email are ignored. The form includes a honeypot and allows 8 submissions per network address every 15 minutes.
+
+Read the captured emails before or after the secrets are set:
+
+```bash
+npx wrangler d1 execute agency-operator --remote --command "SELECT email, name, created_at, referrer, user_agent FROM launch_signups ORDER BY created_at DESC;"
+```
+
+After `OPERATOR_PASSWORD` and `SESSION_SECRET` are set, the holding page is gone and the operator app behaves as before. The rows stay in D1. A logged-in operator can also open **Signups** (`/settings/signups`).
 
 ```bash
 npx wrangler secret put OPERATOR_PASSWORD
@@ -161,7 +172,9 @@ npx wrangler d1 execute agency-operator --local --file=migrations/0002_seed.sql
 npm run preview
 ```
 
-Login is one operator password, checked with a SHA-256 digest and a constant-time compare. The session cookie `ao_session` is HttpOnly and SameSite=Lax, signed with `SESSION_SECRET`. It is marked Secure on HTTPS, which the custom domain is. Eight failed attempts per IP in 15 minutes are rejected. Every page and API route except `/login`, `/api/login`, and static assets requires the cookie. That includes `POST /api/higgsfield/webhook`. Live status still arrives through the browser poll below. A provider callback would need its own exemption later; the route already rejects requests when `HF_WEBHOOK_TOKEN` is unset.
+Login is one operator password, checked with a SHA-256 digest and a constant-time compare. The session cookie `ao_session` is HttpOnly and SameSite=Lax, signed with `SESSION_SECRET`. It is marked Secure on HTTPS, which the custom domain is. Eight failed attempts per IP in 15 minutes are rejected. Once the two secrets are set, every page and API route except `/login`, `/api/login`, and static assets requires the cookie. That includes `POST /api/higgsfield/webhook`. While the secrets are missing, visitors get the holding page, and `POST /api/launch-signup` is the only write that is accepted. Live status still arrives through the browser poll below. A provider callback would need its own exemption later; the route already rejects requests when `HF_WEBHOOK_TOKEN` is unset.
+
+This repository does not deploy from GitHub. Workers Builds has no builds for `agency-operator`. Merging a pull request does not publish the site. Deploy with `npm run deploy` from a machine that holds the Cloudflare API token.
 
 Generation does not hold one request open for the provider poll window. While a job status is `generating`, the browser calls `POST /api/jobs/:id/poll` every few seconds.
 

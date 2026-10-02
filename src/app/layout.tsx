@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
-import { ClipboardList, Library, Plug, Plus, ScrollText, SlidersHorizontal, LayoutTemplate, type LucideIcon } from "lucide-react";
+import { ClipboardList, Library, Mail, Plug, Plus, ScrollText, SlidersHorizontal, LayoutTemplate, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
 import { hydrateProcessEnv } from "@/lib/cloudflare-env";
@@ -24,6 +24,7 @@ const links: { label: string; href: string; icon: LucideIcon }[] = [
   { label: "Autonomy", href: "/settings/autonomy", icon: SlidersHorizontal },
   { label: "Connection", href: "/settings/connection", icon: Plug },
   { label: "Audit", href: "/audit", icon: ScrollText },
+  { label: "Signups", href: "/settings/signups", icon: Mail },
 ];
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
