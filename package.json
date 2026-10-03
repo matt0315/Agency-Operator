@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "tsx --test src/lib/schema.test.ts src/lib/economics.test.ts src/lib/autonomy.test.ts src/lib/pipeline.test.ts",
+    "test": "tsx --test src/lib/schema.test.ts src/lib/economics.test.ts src/lib/autonomy.test.ts src/lib/pipeline.test.ts src/lib/launch-signup.test.ts",
     "lint": "tsc --noEmit",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
     "deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",

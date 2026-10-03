@@ -1,9 +1,10 @@
 import type { Metadata } from "next";
 import { IBM_Plex_Mono, IBM_Plex_Sans } from "next/font/google";
-import { ClipboardList, Library, Plug, Plus, ScrollText, SlidersHorizontal, LayoutTemplate, type LucideIcon } from "lucide-react";
+import { ClipboardList, Library, Mail, Plug, Plus, ScrollText, SlidersHorizontal, LayoutTemplate, type LucideIcon } from "lucide-react";
 import Link from "next/link";
 import "./globals.css";
 import { hydrateProcessEnv } from "@/lib/cloudflare-env";
+import { OPERATOR_HOME_PATH } from "@/lib/holding-page";
 import { analysisMode, generationMode } from "@/lib/mode";
 
 const sans = IBM_Plex_Sans({ subsets: ["latin"], weight: ["400", "500", "600"] });
@@ -17,13 +18,14 @@ export const metadata: Metadata = {
 };
 
 const links: { label: string; href: string; icon: LucideIcon }[] = [
-  { label: "Jobs", href: "/", icon: ClipboardList },
+  { label: "Jobs", href: OPERATOR_HOME_PATH, icon: ClipboardList },
   { label: "New job", href: "/jobs/new", icon: Plus },
   { label: "Templates", href: "/templates", icon: LayoutTemplate },
   { label: "Catalog", href: "/catalog", icon: Library },
   { label: "Autonomy", href: "/settings/autonomy", icon: SlidersHorizontal },
   { label: "Connection", href: "/settings/connection", icon: Plug },
   { label: "Audit", href: "/audit", icon: ScrollText },
+  { label: "Signups", href: "/settings/signups", icon: Mail },
 ];
 
 export default async function RootLayout({ children }: { children: React.ReactNode }) {
@@ -37,7 +39,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
         <div className="mx-auto min-h-screen max-w-[1440px] px-5 py-5">
           <header className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-[var(--color-line)] pb-4">
             <div>
-              <Link href="/" className="text-xl font-medium tracking-tight">
+              <Link href={OPERATOR_HOME_PATH} className="text-xl font-medium tracking-tight">
                 Agency Operator
               </Link>
               <p className="mt-1 max-w-xl text-sm text-[var(--color-muted)]">

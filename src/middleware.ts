@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { holdingPageResponse, publicDecision, UNCONFIGURED_MESSAGE } from "@/lib/holding-page";
 import { SESSION_COOKIE, verifySession } from "@/lib/session";
 
 async function secret(name: string): Promise<string | undefined> {
@@ -20,11 +21,14 @@ export async function middleware(request: NextRequest) {
     pathname.startsWith("/_next") ||
     pathname.startsWith("/demo") ||
     pathname === "/favicon.ico" ||
-    pathname === "/icon.svg" ||
-    pathname === "/login"
+    pathname === "/icon.svg"
   ) {
     return NextResponse.next();
   }
+
+  const decision = publicDecision(request);
+  if (decision.kind === "page") return holdingPageResponse(request, decision.state);
+  if (decision.kind === "next") return NextResponse.next();
 
   if (process.env.NODE_ENV === "development" && process.env.APP_MODE === "mock") {
     return NextResponse.next();
@@ -33,12 +37,11 @@ export async function middleware(request: NextRequest) {
   const password = await secret("OPERATOR_PASSWORD");
   const sessionSecret = await secret("SESSION_SECRET");
   if (!password || !sessionSecret) {
-    return new NextResponse("Agency Operator is not configured. Set OPERATOR_PASSWORD and SESSION_SECRET before serving.", {
+    return new NextResponse(UNCONFIGURED_MESSAGE, {
       status: 503,
+      headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" },
     });
   }
-
-  if (pathname === "/api/login") return NextResponse.next();
 
   const valid = await verifySession(request.cookies.get(SESSION_COOKIE)?.value, sessionSecret);
   if (valid) return NextResponse.next();
