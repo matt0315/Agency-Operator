@@ -1,4 +1,5 @@
 import { clearLoginFailures, countRecentLoginFailures, recordLoginFailure } from "@/lib/db";
+import { OPERATOR_HOME_PATH } from "@/lib/holding-page";
 import { passwordsMatch, redirectWithCookie, sessionCookie, signSession } from "@/lib/session";
 import { ensureReady } from "@/lib/service";
 
@@ -49,5 +50,5 @@ async function login(request: Request) {
   await clearLoginFailures(ip);
   const token = await signSession(sessionSecret);
   const secure = new URL(request.url).protocol === "https:";
-  return redirectWithCookie(new URL("/", request.url).toString(), sessionCookie(token, secure));
+  return redirectWithCookie(new URL(OPERATOR_HOME_PATH, request.url).toString(), sessionCookie(token, secure));
 }

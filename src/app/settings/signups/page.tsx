@@ -11,7 +11,7 @@ export default async function SignupsPage() {
       <div>
         <h1 className="text-2xl font-medium">Launch signups</h1>
         <p className="mt-2 text-sm text-[var(--color-muted)]">
-          Emails captured on the public holding page while operator login was not configured. They stay in D1 after the secrets are set.
+          Emails left on the public page. They stay in D1.
         </p>
       </div>
       {signups.length === 0 ? (

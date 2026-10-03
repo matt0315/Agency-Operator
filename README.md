@@ -15,7 +15,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000. With no API keys, the app stays in mock mode. Paste a brief and the studio runs it. The seeded jobs are already on the board so each stage can be inspected.
+Open http://localhost:3000/app. With no API keys, the app stays in mock mode. Paste a brief and the studio runs it. The seeded jobs are already on the board so each stage can be inspected. http://localhost:3000 is the public launch page.
 
 ```bash
 npm test
@@ -125,7 +125,7 @@ npx wrangler d1 execute agency-operator --remote --file=migrations/0003_launch_s
 
 The current deploy token cannot run those commands. Execute the SQL files directly. `0003` is optional because the first signup creates the same tables.
 
-Set secrets from the repo root. Wrangler prompts for each value and does not print it back. Until both required secrets exist, including when `APP_MODE=mock`, the public site serves a holding page instead of the operator app. Visitors can leave an email. Signups are stored in D1 table `launch_signups` on database `agency-operator` (binding `DB`). Repeats of the same email are ignored. The form includes a honeypot and allows 8 submissions per network address every 15 minutes.
+Set secrets from the repo root. Wrangler prompts for each value and does not print it back. `/` is the public holding page whether or not those secrets exist. Visitors can leave an email. Signups are stored in D1 table `launch_signups` on database `agency-operator` (binding `DB`). Repeats of the same email are ignored. The form includes a honeypot and allows 8 submissions per network address every 15 minutes. `POST /api/launch-signup` stays public.
 
 Read the captured emails before or after the secrets are set:
 
@@ -133,7 +133,7 @@ Read the captured emails before or after the secrets are set:
 npx wrangler d1 execute agency-operator --remote --command "SELECT email, name, created_at, referrer, user_agent FROM launch_signups ORDER BY created_at DESC;"
 ```
 
-After `OPERATOR_PASSWORD` and `SESSION_SECRET` are set, the holding page is gone and the operator app behaves as before. The rows stay in D1. A logged-in operator can also open **Signups** (`/settings/signups`).
+After `OPERATOR_PASSWORD` and `SESSION_SECRET` are set, `/login` opens the operator app. A successful login lands on `/app`, the pipeline board. The rest of the signed-in app is unchanged. Captured rows stay in D1, and a logged-in operator can open **Signups** (`/settings/signups`). Without those two secrets, `/`, `/login`, and `POST /api/launch-signup` still respond, and every other route returns 503.
 
 ```bash
 npx wrangler secret put OPERATOR_PASSWORD
@@ -172,7 +172,7 @@ npx wrangler d1 execute agency-operator --local --file=migrations/0002_seed.sql
 npm run preview
 ```
 
-Login is one operator password, checked with a SHA-256 digest and a constant-time compare. The session cookie `ao_session` is HttpOnly and SameSite=Lax, signed with `SESSION_SECRET`. It is marked Secure on HTTPS, which the custom domain is. Eight failed attempts per IP in 15 minutes are rejected. Once the two secrets are set, every page and API route except `/login`, `/api/login`, and static assets requires the cookie. That includes `POST /api/higgsfield/webhook`. While the secrets are missing, visitors get the holding page, and `POST /api/launch-signup` is the only write that is accepted. Live status still arrives through the browser poll below. A provider callback would need its own exemption later; the route already rejects requests when `HF_WEBHOOK_TOKEN` is unset.
+Login is one operator password, checked with a SHA-256 digest and a constant-time compare. The session cookie `ao_session` is HttpOnly and SameSite=Lax, signed with `SESSION_SECRET`. It is marked Secure on HTTPS, which the custom domain is. Eight failed attempts per IP in 15 minutes are rejected. These routes stay public: `GET /` (holding page), `GET /login`, `POST /api/login`, `POST /api/launch-signup`, and static assets. Once the two secrets are set, every other page and API route requires the cookie. That includes `GET /app` and `POST /api/higgsfield/webhook`. Live status still arrives through the browser poll below. A provider callback would need its own exemption later; the route already rejects requests when `HF_WEBHOOK_TOKEN` is unset.
 
 This repository does not deploy from GitHub. Workers Builds has no builds for `agency-operator`. Merging a pull request does not publish the site. Deploy with `npm run deploy` from a machine that holds the Cloudflare API token.
 

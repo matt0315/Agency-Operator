@@ -5,7 +5,8 @@ import { DatabaseSync } from "node:sqlite";
 import {
   holdingPageHtml,
   holdingStateFromUrl,
-  unconfiguredDecision,
+  OPERATOR_HOME_PATH,
+  publicDecision,
   UNCONFIGURED_MESSAGE,
 } from "./holding-page";
 import {
@@ -142,15 +143,16 @@ test("a different address is not limited by someone else's attempts", async () =
   assert.equal((await listLaunchSignups(db)).some((row) => row.email === "other@example.com"), true);
 });
 
-test("holding page is the public response while secrets are missing", () => {
-  const home = unconfiguredDecision(new Request("https://aiautomators.com.au/"));
-  assert.deepEqual(home, { kind: "page", state: "ready" });
-  const thanks = unconfiguredDecision(new Request("https://aiautomators.com.au/?joined=1"));
-  assert.deepEqual(thanks, { kind: "page", state: "joined" });
-  const signup = unconfiguredDecision(new Request("https://aiautomators.com.au/api/launch-signup", { method: "POST" }));
-  assert.deepEqual(signup, { kind: "next" });
-  const login = unconfiguredDecision(new Request("https://aiautomators.com.au/api/login", { method: "POST" }));
-  assert.deepEqual(login, { kind: "unavailable" });
+test("the public home stays the holding page and the operator app is separate", () => {
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/")), { kind: "page", state: "ready" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/?joined=1")), { kind: "page", state: "joined" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/?error=limited")), { kind: "page", state: "limited" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/api/launch-signup", { method: "POST" })), { kind: "next" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/login")), { kind: "next" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/api/login", { method: "POST" })), { kind: "next" });
+  assert.deepEqual(publicDecision(new Request(`https://aiautomators.com.au${OPERATOR_HOME_PATH}`)), { kind: "app" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/settings/signups")), { kind: "app" });
+  assert.deepEqual(publicDecision(new Request("https://aiautomators.com.au/api/jobs/1/poll", { method: "POST" })), { kind: "app" });
 
   const html = holdingPageHtml("ready", "https://aiautomators.com.au");
   assert.match(html, /AI Automators is launching soon/);
@@ -163,6 +165,7 @@ test("holding page is the public response while secrets are missing", () => {
   assert.match(joined, /You're on the list/);
   assert.doesNotMatch(joined, /<form/);
   assert.equal(holdingStateFromUrl(new URL("https://aiautomators.com.au/jobs/1?joined=1")), "ready");
+  assert.equal(OPERATOR_HOME_PATH, "/app");
   assert.match(UNCONFIGURED_MESSAGE, /OPERATOR_PASSWORD/);
 });
 

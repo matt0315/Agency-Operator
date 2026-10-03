@@ -2,10 +2,12 @@ import { LAUNCH_SIGNUP_PATH } from "./launch-signup";
 
 export type HoldingState = "ready" | "joined" | "invalid" | "limited";
 
-export type UnconfiguredDecision =
+export const OPERATOR_HOME_PATH = "/app";
+
+export type PublicDecision =
   | { kind: "next" }
   | { kind: "page"; state: HoldingState }
-  | { kind: "unavailable" };
+  | { kind: "app" };
 
 const PAGE_HEADERS = {
   "content-type": "text/html; charset=utf-8",
@@ -21,13 +23,14 @@ export function holdingStateFromUrl(url: URL): HoldingState {
   return "ready";
 }
 
-export function unconfiguredDecision(request: Request): UnconfiguredDecision {
+export function publicDecision(request: Request): PublicDecision {
   const url = new URL(request.url);
+  const read = request.method === "GET" || request.method === "HEAD";
+  if (read && url.pathname === "/") return { kind: "page", state: holdingStateFromUrl(url) };
   if (request.method === "POST" && url.pathname === LAUNCH_SIGNUP_PATH) return { kind: "next" };
-  if (request.method === "GET" || request.method === "HEAD") {
-    return { kind: "page", state: holdingStateFromUrl(url) };
-  }
-  return { kind: "unavailable" };
+  if (read && url.pathname === "/login") return { kind: "next" };
+  if (request.method === "POST" && url.pathname === "/api/login") return { kind: "next" };
+  return { kind: "app" };
 }
 
 export const UNCONFIGURED_MESSAGE =
